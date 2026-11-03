@@ -49,7 +49,7 @@ a stable release.
    the helper. This is the only in-app elevation action. Inspect the unsigned
    spike and its setup script before approving elevation; no installer or
    permission warning is bypassed.
-4. Restart camera apps that were running before helper installation. Choose
+4. Restart camera apps that were running before the UI connected to the helper. Choose
    apps and lights, test light connections (read only), and explicitly enable
    automation. The helper's reported status must be healthy.
 
@@ -159,14 +159,17 @@ one. Stale registry values never become an inactive state.
 
 Important limitations and safeguards:
 
-- Cameras already active when the helper starts cannot be reconstructed from
+- Cameras already active when the UI connects to the helper cannot be reconstructed from
   these events. A process predating the observation epoch stays unknown even
   after a matched pair; restart that app to establish a supported-path
   baseline. A process created after the observation boundary has a known
-  baseline **only for this supported capture-engine source**.
+  baseline **only for this supported capture-engine source**. Each IPC
+  connection has its own tracker; reconnecting creates a new observation
+  boundary. Restart monitored apps after reconnecting.
 - Unsupported camera APIs, proxy/broker attribution and inaccessible process
-  identities are not solved. Inaccessible identities make that session
-  unhealthy. Protected processes may therefore prevent unattended automation.
+  identities are not solved. Inaccessible identities make that client's
+  snapshot unhealthy and discard existing baselines rather than infer absence.
+  Protected processes may therefore prevent unattended automation.
   The helper must be evaluated under LocalService on each target Windows
   build; running the UI smoke does not validate provider access.
 - Duplicate starts, unmatched stops, schema errors, event loss, helper
@@ -199,7 +202,12 @@ The helper has no light-networking code, preferences, generic command execution,
 client-selected provider GUIDs, or client-supplied paths. Its fixed local
 named pipe rejects network logons, identifies the client by Windows
 impersonation, and obtains the client's real session ID. Snapshots are filtered
-to that SID and interactive session. The UI verifies the pipe's LocalService
+to that SID and interactive session. Process-owner SIDs come from Windows WTS
+enumeration; image paths and creation times are queried under the authenticated
+client's impersonation, not by opening user-process tokens as LocalService.
+No client supplies process paths or owner SIDs. Only a bounded queue of
+lifecycle metadata crosses from the ETW callback into per-client trackers;
+overflow becomes unknown state. The UI verifies the pipe's LocalService
 owner before accepting data; ordinary users cannot assign that owner to a
 spoofed pipe. Same-user processes are the same trust boundary as this user's
 preferences; administrators can replace the installed helper.
@@ -220,9 +228,15 @@ tray UI, normal-user orchestration and explicit setup entry point.
 PR/main verification builds the solution, runs the executable managed and
 Native AOT synthetic test harness, publishes both Native AOT executables,
 checks the uninstalled helper entry point and runs the isolated native UI
-smoke. Tests do not install a service, change machine permissions/routes or
-write to physical lights. The draft-release workflow requires a successful
+smoke. The synthetic harness does not install a service or contact hardware.
+A separate integration check **only on disposable hosted Windows runners**
+uses the published setup script to install/start the LocalService helper,
+requires successful ETW startup and two fresh authenticated healthy snapshots
+containing a temporary standard user's executable identity, checks installed
+helper write protection, and removes the service/executable/account in
+guaranteed cleanup. It does not activate a camera, write to lights, change
+routes or widen provider ACLs. The draft-release workflow requires a successful
 Verify result for its exact main commit, rejects existing tags, and never
-clobbers published release assets. Production signing, real-machine helper
-validation and a monitored real-camera/light acceptance run are remaining
+clobbers published release assets. Production signing, target-machine
+compatibility and a monitored real-camera/light acceptance run are remaining
 release gates, not claims made by synthetic tests.

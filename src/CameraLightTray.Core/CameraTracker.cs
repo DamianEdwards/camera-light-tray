@@ -21,7 +21,7 @@ public sealed class CameraTracker(long? baselineStart = null)
         _baselineStart = observationStart ?? DateTimeOffset.UtcNow.ToFileTime();
         _processes.Clear();
         Healthy = true;
-        Detail = "Capture-engine lifecycle monitoring. Restart apps that predate the helper to establish a baseline; unsupported camera APIs remain unknown.";
+        Detail = "Capture-engine lifecycle monitoring. Restart apps that predate this monitor connection to establish a baseline; unsupported camera APIs remain unknown.";
     }
     public void Invalidate(string detail, bool sourceStillRunning = false)
     {

@@ -286,6 +286,12 @@ finally
 if (OperatingSystem.IsWindows())
 {
     using var identity = WindowsIdentity.GetCurrent();
+    using var ownProcess = System.Diagnostics.Process.GetCurrentProcess();
+    var ownCatalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate(identity.User!.Value, ownProcess.SessionId);
+    Equal(true, ownCatalog.Processes.Any(p => p.Pid == ownProcess.Id && p.UserSid == identity.User.Value));
+    var otherCatalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate("S-1-0-0", ownProcess.SessionId);
+    Equal(0, otherCatalog.Processes.Length);
+    passed++; Console.WriteLine("PASS WTS process owner enumeration and SID/session-filtered executable identities");
     var security = new PipeSecurity();
     security.SetOwner(identity.User!);
     security.SetAccessRuleProtection(true, false);

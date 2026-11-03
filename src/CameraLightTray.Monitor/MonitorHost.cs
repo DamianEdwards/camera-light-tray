@@ -12,9 +12,12 @@ namespace CameraLightTray.Monitor;
 internal sealed class MonitorHost : IDisposable
 {
     private readonly object _gate = new();
-    private readonly CameraTracker _tracker = new();
     private readonly EtwMonitor _etw;
-    private HashSet<int> _uncertainSessions = [];
+    private sealed record CaptureEvent(long Sequence, int Pid, long Timestamp, int Id, ulong Engine, uint Result);
+    private readonly Queue<CaptureEvent> _events = [];
+    private long _eventSequence, _epoch = 1;
+    private bool _healthy;
+    private string _detail = "Camera monitor starting.";
     private readonly List<Task> _clients = [];
     private Task? _poll, _accept;
     private long _sequence;
@@ -22,7 +25,7 @@ internal sealed class MonitorHost : IDisposable
 
     internal void Start(CancellationToken token)
     {
-        try { _etw.Start(() => { lock (_gate) _tracker.Ready(); }); }
+        try { _etw.Start(() => { lock (_gate) { _healthy = true; _detail = "Capture-engine lifecycle monitoring; pre-existing captures remain unknown."; } }); }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
         {
             Invalidate($"ETW unavailable ({ex.Message}). Use explicit setup/repair; no inactive state is inferred.");
@@ -35,18 +38,17 @@ internal sealed class MonitorHost : IDisposable
         Invalidate("Monitor worker failed: " + t.Exception!.GetBaseException().Message),
         CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
-    internal void Invalidate(string reason) { lock (_gate) _tracker.Invalidate(reason); }
+    internal void Invalidate(string reason)
+    {
+        lock (_gate) { _epoch++; _healthy = false; _detail = reason; _events.Clear(); }
+    }
     private void Transition(int pid, long timestamp, int eventId, ulong engine, uint hresult)
     {
-        try
+        lock (_gate)
         {
-            var process = ProcessCatalog.Read(pid);
-            if (process is null) { Invalidate("A capture process identity could not be resolved."); return; }
-            if (timestamp < process.StartTime) return; // A buffered event from a reused PID.
-            lock (_gate) _tracker.Transition(process, eventId, engine, hresult);
+            _events.Enqueue(new(++_eventSequence, pid, timestamp, eventId, engine, hresult));
+            if (_events.Count > 2048) _events.Dequeue();
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
-        { Invalidate("Capture process disappeared before its identity could be verified."); }
     }
 
     private async Task PollAsync(CancellationToken token)
@@ -54,12 +56,6 @@ internal sealed class MonitorHost : IDisposable
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (!token.IsCancellationRequested)
         {
-            var (processes, uncertain) = ProcessCatalog.Enumerate();
-            lock (_gate)
-            {
-                _tracker.Synchronize(processes);
-                _uncertainSessions = uncertain;
-            }
             _etw.CheckLoss();
             if (!await timer.WaitForNextTickAsync(token)) break;
         }
@@ -112,20 +108,53 @@ internal sealed class MonitorHost : IDisposable
                 using var process = Process.GetProcessById((int)pid);
                 int session = process.SessionId;
                 if (session == 0) return;
+                var tracker = new CameraTracker();
+                tracker.Ready();
+                long cursor, epoch;
+                lock (_gate) { cursor = _eventSequence; epoch = _epoch; }
                 token.CancelAfter(Timeout.InfiniteTimeSpan);
                 using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
                 do
                 {
-                    MonitorSnapshot snapshot;
+                    ProcessIdentity[] identities = [];
+                    bool uncertain = true;
+                    string? identityError = null;
+                    long enumerationStarted = DateTimeOffset.UtcNow.ToFileTime();
+                    try { pipe.RunAsClient(() => (identities, uncertain) = ProcessCatalog.Enumerate(sid, session)); }
+                    catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or UnauthorizedAccessException)
+                    { identityError = "Client identity enumeration failed: " + ex.Message; tracker.Invalidate(identityError); }
+                    CaptureEvent[] events;
+                    bool healthy, gap;
+                    string detail;
+                    long currentEpoch, sequence;
                     lock (_gate)
                     {
-                        bool uncertain = _uncertainSessions.Contains(session);
-                        snapshot = new(1, ++_sequence, _tracker.Epoch, DateTimeOffset.UtcNow,
-                            _tracker.Healthy && !uncertain, uncertain ?
-                            "Some process identities are inaccessible; state is unknown, not inactive." : _tracker.Detail,
-                            _tracker.Apps(sid, session));
+                        gap = _events.TryPeek(out var oldest) && cursor < oldest.Sequence - 1;
+                        // Defer events newer than this catalog snapshot: a just-created
+                        // client process may not have been enumerated yet.
+                        events = _events.Where(e => e.Sequence > cursor).TakeWhile(e => e.Timestamp < enumerationStarted).ToArray();
+                        currentEpoch = _epoch; healthy = _healthy; detail = _detail;
+                        if (events.Length > 0) cursor = events[^1].Sequence;
+                        sequence = ++_sequence;
                     }
+                    if (epoch != currentEpoch || gap)
+                    {
+                        tracker.Invalidate(gap ? "Client capture-event buffer overflow; state unknown." : detail);
+                        epoch = currentEpoch;
+                    }
+                    if (uncertain) tracker.Invalidate(identityError ??
+                        "Client process enumeration was incomplete; existing capture baselines are unknown.", healthy);
+                    tracker.Synchronize(identities);
+                    var byPid = identities.ToDictionary(p => p.Pid);
+                    foreach (var capture in events)
+                        if (byPid.TryGetValue(capture.Pid, out var identity) && capture.Timestamp >= identity.StartTime)
+                            tracker.Transition(identity, capture.Id, capture.Engine, capture.Result);
+                    var snapshot = new MonitorSnapshot(1, sequence, (currentEpoch << 32) | tracker.Epoch, DateTimeOffset.UtcNow,
+                        healthy && tracker.Healthy && !uncertain,
+                        !healthy ? detail : identityError ?? (!tracker.Healthy ? tracker.Detail : uncertain ?
+                            "Some client process identities are inaccessible; state is unknown, not inactive." : detail),
+                        tracker.Apps(sid, session));
                     token.CancelAfter(TimeSpan.FromSeconds(5));
                     await writer.WriteLineAsync(JsonSerializer.Serialize(snapshot, AppJson.Default.MonitorSnapshot).AsMemory(), token.Token);
                     token.CancelAfter(Timeout.InfiniteTimeSpan);

@@ -3,9 +3,11 @@
     <TargetFramework>net11.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CameraLightTray.Core\CameraLightTray.Core.csproj" />
     <Compile Include="..\..\src\CameraLightTray.App\Platform\MonitorClient.cs" Link="MonitorClient.cs" />
+    <Compile Include="..\..\src\CameraLightTray.Monitor\ProcessCatalog.cs" Link="ProcessCatalog.cs" />
   </ItemGroup>
 </Project>
