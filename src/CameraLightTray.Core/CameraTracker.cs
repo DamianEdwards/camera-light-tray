@@ -11,15 +11,18 @@ public sealed class CameraTracker(long? baselineStart = null)
         public bool BaselineKnown { get; } = baselineKnown;
     }
     private readonly Dictionary<int, Entry> _processes = [];
+    private readonly HashSet<int> _unresolvedOwners = [], _unattributedCaptures = [];
     private long _baselineStart = baselineStart ?? DateTimeOffset.UtcNow.ToFileTime();
     public long Epoch { get; private set; } = 1;
     public bool Healthy { get; private set; }
+    public bool AttributionComplete => _unattributedCaptures.Count == 0;
     public string Detail { get; private set; } = "Monitor starting; existing captures are unknown.";
 
     public void Ready(long? observationStart = null)
     {
         _baselineStart = observationStart ?? DateTimeOffset.UtcNow.ToFileTime();
         _processes.Clear();
+        _unresolvedOwners.Clear(); _unattributedCaptures.Clear();
         Healthy = true;
         Detail = "Capture-engine lifecycle monitoring. Restart apps that predate this monitor connection to establish a baseline; unsupported camera APIs remain unknown.";
     }
@@ -32,14 +35,25 @@ public sealed class CameraTracker(long? baselineStart = null)
         _processes.Clear();
     }
 
-    public void Synchronize(IEnumerable<ProcessIdentity> processes)
+    public void Synchronize(IEnumerable<ProcessIdentity> processes, IEnumerable<int>? unresolvedOwners = null)
     {
+        _unresolvedOwners.Clear();
+        if (unresolvedOwners is not null) _unresolvedOwners.UnionWith(unresolvedOwners);
+        _unattributedCaptures.IntersectWith(_unresolvedOwners);
         var current = processes.ToDictionary(p => p.Pid);
         foreach (var pid in _processes.Keys.ToArray())
             if (!current.TryGetValue(pid, out var process) || process.StartTime != _processes[pid].Identity.StartTime)
                 _processes.Remove(pid);
         foreach (var process in current.Values)
             if (!_processes.ContainsKey(process.Pid)) _processes.Add(process.Pid, new(process, process.StartTime >= _baselineStart));
+    }
+
+    public void UnattributedTransition(int pid, int eventId, uint hresult)
+    {
+        // Other sessions/users cannot poison this client's health. A capture from
+        // a still-unresolved owner in this session must nevertheless block release.
+        if (_unresolvedOwners.Contains(pid) && eventId is 207 or 209 or 211 or 213 && hresult == 0)
+            _unattributedCaptures.Add(pid);
     }
 
     public void Transition(ProcessIdentity process, int eventId, ulong engine, uint hresult)

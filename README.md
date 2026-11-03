@@ -159,17 +159,22 @@ one. Stale registry values never become an inactive state.
 
 Important limitations and safeguards:
 
-- Cameras already active when the UI connects to the helper cannot be reconstructed from
+- Cameras already active when the UI connects to the helper may not be reconstructed from
   these events. A process predating the observation epoch stays unknown even
   after a matched pair; restart that app to establish a supported-path
   baseline. A process created after the observation boundary has a known
   baseline **only for this supported capture-engine source**. Each IPC
   connection has its own tracker; reconnecting creates a new observation
-  boundary. Restart monitored apps after reconnecting.
+  boundary. Available bounded lifecycle history is replayed, but is not a
+  complete startup inventory. Restart monitored apps after reconnecting.
 - Unsupported camera APIs, proxy/broker attribution and inaccessible process
   identities are not solved. Inaccessible identities make that client's
   snapshot unhealthy and discard existing baselines rather than infer absence.
-  Protected processes may therefore prevent unattended automation.
+  Unrelated inaccessible system/other-user processes do not poison this user's
+  catalog health. Successful capture events from unresolved process owners
+  in this client's session do block automated release until ownership is
+  resolved or the process exits; they are never silently discarded as inactive.
+  Protected capture processes may therefore prevent unattended automation.
   The helper must be evaluated under LocalService on each target Windows
   build; running the UI smoke does not validate provider access.
 - Duplicate starts, unmatched stops, schema errors, event loss, helper

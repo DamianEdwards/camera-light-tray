@@ -88,6 +88,21 @@ Test("event loss discards known state and epoch", () =>
     Equal(false, tracker.Healthy); Equal(epoch + 1, tracker.Epoch);
     Equal(CameraStatus.Unknown, State(tracker));
 });
+Test("unrelated owners do not poison health but unattributed session captures block release", () =>
+{
+    var tracker = Tracker();
+    tracker.Synchronize([process], [99]);
+    Equal(true, tracker.AttributionComplete);
+    tracker.UnattributedTransition(98, 211, 0); // Not an unresolved owner in this session.
+    tracker.UnattributedTransition(99, 7, 0);
+    tracker.UnattributedTransition(99, 211, 0x80004005);
+    Equal(true, tracker.AttributionComplete);
+    tracker.UnattributedTransition(99, 211, 0);
+    tracker.UnattributedTransition(99, 213, 0);
+    Equal(false, tracker.AttributionComplete);
+    tracker.Synchronize([process], [99]); Equal(false, tracker.AttributionComplete);
+    tracker.Synchronize([process]); Equal(true, tracker.AttributionComplete);
+});
 
 var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
 Settings Preferences() => new() { AutomationEnabled = true, ActivationMilliseconds = 500, LeaveMilliseconds = 2500,

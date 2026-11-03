@@ -111,20 +111,21 @@ internal sealed class MonitorHost : IDisposable
                 var tracker = new CameraTracker();
                 tracker.Ready();
                 long cursor, epoch;
-                lock (_gate) { cursor = _eventSequence; epoch = _epoch; }
+                lock (_gate) { cursor = _events.TryPeek(out var oldest) ? oldest.Sequence - 1 : _eventSequence; epoch = _epoch; }
                 token.CancelAfter(Timeout.InfiniteTimeSpan);
                 using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: true) { AutoFlush = true };
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
                 do
                 {
                     ProcessIdentity[] identities = [];
+                    int[] unresolvedOwners = [];
                     bool uncertain = true;
                     string? identityError = null;
                     string identityDetail = "";
                     long enumerationStarted = DateTimeOffset.UtcNow.ToFileTime();
-                    try { pipe.RunAsClient(() => (identities, uncertain, identityDetail) = ProcessCatalog.Enumerate(sid, session)); }
+                    try { pipe.RunAsClient(() => (identities, uncertain, identityDetail, unresolvedOwners) = ProcessCatalog.Enumerate(sid, session)); }
                     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or UnauthorizedAccessException)
-                    { identityError = "Client identity enumeration failed: " + ex.Message; tracker.Invalidate(identityError); }
+                    { identityError = "Client identity enumeration failed: " + ex.Message; }
                     CaptureEvent[] events;
                     bool healthy, gap;
                     string detail;
@@ -144,16 +145,24 @@ internal sealed class MonitorHost : IDisposable
                         tracker.Invalidate(gap ? "Client capture-event buffer overflow; state unknown." : detail);
                         epoch = currentEpoch;
                     }
+                    if (!identities.Any(p => p.Pid == pid))
+                    {
+                        uncertain = true;
+                        identityDetail = "Authenticated client's own process identity is inaccessible; state unknown.";
+                    }
                     if (uncertain) tracker.Invalidate(identityError ??
                         "Client process enumeration was incomplete; existing capture baselines are unknown.", healthy);
-                    tracker.Synchronize(identities);
+                    tracker.Synchronize(identities, unresolvedOwners);
                     var byPid = identities.ToDictionary(p => p.Pid);
                     foreach (var capture in events)
                         if (byPid.TryGetValue(capture.Pid, out var identity) && capture.Timestamp >= identity.StartTime)
                             tracker.Transition(identity, capture.Id, capture.Engine, capture.Result);
+                        else tracker.UnattributedTransition(capture.Pid, capture.Id, capture.Result);
                     var snapshot = new MonitorSnapshot(1, sequence, (currentEpoch << 32) | tracker.Epoch, DateTimeOffset.UtcNow,
-                        healthy && tracker.Healthy && !uncertain,
-                        !healthy ? detail : identityError ?? (!tracker.Healthy ? tracker.Detail : uncertain ?
+                        healthy && tracker.Healthy && tracker.AttributionComplete && !uncertain,
+                        !healthy ? detail : identityError ?? (!tracker.AttributionComplete ?
+                            "Capture lifecycle from an unresolved process owner in this session; camera state unknown until identity or lifetime is resolved." :
+                            !tracker.Healthy ? tracker.Detail : uncertain ?
                             identityDetail : detail),
                         tracker.Apps(sid, session));
                     token.CancelAfter(TimeSpan.FromSeconds(5));
