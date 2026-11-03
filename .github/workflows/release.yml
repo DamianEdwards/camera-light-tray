@@ -1,0 +1,55 @@
+name: Draft spike release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Numeric major.minor.patch (without v)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: camera-light-tray-release
+  cancel-in-progress: false
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      checks: read
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Validate immutable source and version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Dispatch from main only.' }
+          if ($env:RELEASE_VERSION -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') { throw 'Invalid version.' }
+          $tag = "v$env:RELEASE_VERSION"
+          $existing = @(git tag --list $tag)
+          if ($LASTEXITCODE -ne 0 -or $existing.Count) { throw 'Tag already exists or could not be read; never overwrite a release.' }
+          $checks = gh api "repos/$env:GITHUB_REPOSITORY/commits/$env:GITHUB_SHA/check-runs" --jq '.check_runs[] | select(.name == "Windows x64 managed, Native AOT and package") | .conclusion'
+          if ($LASTEXITCODE -ne 0 -or 'success' -notin @($checks)) { throw 'Source commit must have successful Verify checks.' }
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - shell: pwsh
+        run: .\tools\verify.ps1 -NativeTests
+      - shell: pwsh
+        run: .\tools\package.ps1 -Version $env:RELEASE_VERSION
+      - name: Stage draft prerelease (never publish automatically)
+        shell: pwsh
+        run: |
+          $assets = @(Get-ChildItem artifacts -File | Where-Object Name -like "CameraLightTray-$env:RELEASE_VERSION-*" | ForEach-Object FullName)
+          if ($assets.Count -ne 3) { throw 'Expected app ZIP, symbols ZIP and SHA256 manifest.' }
+          gh release create "v$env:RELEASE_VERSION" @assets --target $env:GITHUB_SHA --draft --prerelease `
+            --title "Camera Light Tray $env:RELEASE_VERSION (unsigned spike)" `
+            --notes "Unsigned Windows x64 Native AOT spike. Requires the shared Windows App Runtime 2.5+ (compatible 2.x). No .NET runtime needed. Monitor setup is explicit and requires elevation. See README for safety limitations."
+          if ($LASTEXITCODE -ne 0) { throw 'Draft creation failed. Inspect releases before retrying; assets are never clobbered.' }

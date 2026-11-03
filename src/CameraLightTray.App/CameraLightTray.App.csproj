@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net11.0-windows10.0.22621.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.22621.0</TargetPlatformMinVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <WindowsAppSDKBootstrapAutoInitializeOptions_OnNoMatch_ShowUI>true</WindowsAppSDKBootstrapAutoInitializeOptions_OnNoMatch_ShowUI>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>CameraLightTray</AssemblyName>
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CameraLightTray.Core\CameraLightTray.Core.csproj" />
+    <Compile Include="..\CameraLightTray.Monitor\ProcessCatalog.cs" Link="Platform\ProcessCatalog.cs" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" Version="2.1.9" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.3.9" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="2.5.1" />
+    <PackageReference Include="Microsoft.UI.Reactor" Version="0.1.0-preview.16" />
+    <RuntimeHostConfigurationOption Include="Reactor.DevtoolsSupport" Value="false" Trim="true" />
+  </ItemGroup>
+  <Target Name="CopyWinUIResourcesForAot" AfterTargets="Publish" Condition="'$(PublishAot)' == 'true'">
+    <ItemGroup>
+      <WinUIResources Include="$(OutputPath)**\*.xbf" />
+      <WinUIResources Include="$(OutputPath)$(AssemblyName).pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(WinUIResources)" DestinationFiles="@(WinUIResources->'$(PublishDir)%(RecursiveDir)%(Filename)%(Extension)')" />
+  </Target>
+</Project>

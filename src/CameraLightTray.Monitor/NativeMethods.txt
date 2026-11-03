@@ -1,0 +1,9 @@
+StartTrace
+ControlTrace
+EnableTraceEx2
+OpenTrace
+ProcessTrace
+CloseTrace
+TdhGetPropertySize
+TdhGetProperty
+GetNamedPipeClientProcessId

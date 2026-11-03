@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CameraLightTray.Core/CameraLightTray.Core.csproj" />
+    <Project Path="src/CameraLightTray.Monitor/CameraLightTray.Monitor.csproj" />
+    <Project Path="src/CameraLightTray.App/CameraLightTray.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CameraLightTray.Tests/CameraLightTray.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,52 @@
+name: Verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows:
+    name: Windows x64 managed, Native AOT and package
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
+        with:
+          global-json-file: global.json
+      - name: Build and test without hardware or service installation
+        shell: pwsh
+        run: .\tools\verify.ps1 -NativeTests
+      - name: Publish Native AOT ZIP with shared Windows App SDK
+        shell: pwsh
+        run: .\tools\package.ps1
+      - name: Check standalone helper entry point (no ETW or installation)
+        shell: pwsh
+        run: |
+          & .\artifacts\package-0.1.0\monitor\CameraLightTray.Monitor.exe --check
+          if ($LASTEXITCODE -ne 0) { throw 'Helper check failed.' }
+      - name: Register shared framework on disposable runner and smoke native UI
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $runtime = .\tools\get-runtime.ps1
+          $installed = Get-AppxPackage -Name $runtime.Name | Where-Object {
+            $_.Architecture -eq 'X64' -and [version]$_.Version -ge [version]$runtime.Version
+          }
+          if (-not $installed) { Add-AppxPackage -Path $runtime.PackagePath }
+          .\tools\smoke.ps1 -Executable .\artifacts\package-0.1.0\CameraLightTray.exe
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: unsigned-development-win-x64
+          path: |
+            artifacts/CameraLightTray-*.zip
+            artifacts/CameraLightTray-*-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
