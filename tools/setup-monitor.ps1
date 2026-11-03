@@ -53,8 +53,9 @@ $fileAcl.SetAccessRuleProtection($false, $false)
 $fileAcl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
 Set-Acl -LiteralPath $executable -AclObject $fileAcl
 if (-not $existing) {
-    & sc.exe create $serviceName "binPath= `"$executable`"" 'start= auto' 'obj= NT AUTHORITY\LocalService' 'DisplayName= Camera Light Tray Monitor'
-    if ($LASTEXITCODE -ne 0) { throw 'Service creation failed.' }
+    $account = New-Object PSCredential('NT AUTHORITY\LocalService', (New-Object Security.SecureString))
+    New-Service -Name $serviceName -BinaryPathName "`"$executable`"" -StartupType Automatic `
+        -Credential $account -DisplayName 'Camera Light Tray Monitor' | Out-Null
 }
 & sc.exe description $serviceName 'Read-only Media Foundation camera lifecycle monitor; no camera frames, preferences or light networking.'
 if ($LASTEXITCODE -ne 0) { throw 'Service description failed.' }
