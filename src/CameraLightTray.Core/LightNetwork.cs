@@ -2,6 +2,9 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text.Json;
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("CameraLightTray.Tests")]
 
 namespace CameraLightTray.Core;
 
@@ -84,9 +87,16 @@ public sealed class ElgatoTransport : ILightTransport
     public async Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken)
     {
         using var client = CreateClient(device);
-        using var response = await client.PutAsJsonAsync("/elgato/lights", new LightRequest(1, [state]),
-            AppJson.Default.LightRequest, cancellationToken);
+        using var content = CreateWriteContent(state);
+        using var response = await client.PutAsync("/elgato/lights", content, cancellationToken);
         response.EnsureSuccessStatusCode();
+    }
+    internal static ByteArrayContent CreateWriteContent(LightState state)
+    {
+        // These embedded HTTP servers reject chunked JSON requests.
+        var content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new LightRequest(1, [state]), AppJson.Default.LightRequest));
+        content.Headers.ContentType = new("application/json");
+        return content;
     }
     public async Task<string> IdentifyAsync(LightDevice device, CancellationToken cancellationToken)
     {

@@ -123,7 +123,7 @@ internal sealed class MonitorHost : IDisposable
                     string? identityError = null;
                     string identityDetail = "";
                     long enumerationStarted = DateTimeOffset.UtcNow.ToFileTime();
-                    try { pipe.RunAsClient(() => (identities, uncertain, identityDetail, unresolvedOwners) = ProcessCatalog.Enumerate(sid, session)); }
+                    try { pipe.RunAsClient(() => (identities, uncertain, identityDetail, unresolvedOwners, _) = ProcessCatalog.Enumerate(sid, session)); }
                     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or UnauthorizedAccessException)
                     { identityError = "Client identity enumeration failed: " + ex.Message; }
                     CaptureEvent[] events;

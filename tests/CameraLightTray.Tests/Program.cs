@@ -105,6 +105,87 @@ Test("unrelated owners do not poison health but unattributed session captures bl
 });
 
 var now = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+CameraDevice[] devices = [new("camera:one", "Example Camera"), new("camera:two", "Second Camera")];
+var sensorProcess = process with { StartTime = now.AddMinutes(-1).ToFileTime() };
+SensorActivity Activity(string id, bool streaming, int pid = 42, long? time = null) =>
+    new(id, "Example Camera", [new(pid, streaming, time ?? now.ToFileTime())]);
+MonitorSnapshot SensorSnapshot(SensorState sensor, string[]? selected = null, int[]? excluded = null) =>
+    sensor.Snapshot([sensorProcess], excluded ?? [], devices, selected ?? [], now);
+Test("sensor startup is unknown, authoritative inventory includes already-active camera", () =>
+{
+    var sensor = new SensorState();
+    Equal(false, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Unknown, SensorSnapshot(sensor).Apps.Single().Status);
+    sensor.Receive([Activity("camera:one", true)]);
+    Equal(true, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    sensor.Receive([]);
+    Equal(CameraStatus.Inactive, SensorSnapshot(sensor).Apps.Single().Status);
+});
+Test("sensor camera filters and multiple cameras aggregate correctly", () =>
+{
+    var sensor = new SensorState();
+    sensor.Receive([Activity("camera:one", true), Activity("camera:two", false)]);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    Equal(CameraStatus.Inactive, SensorSnapshot(sensor, ["camera:two"]).Apps.Single().Status);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor, ["CAMERA:ONE"]).Apps.Single().Status);
+    sensor.Receive([Activity("camera:one", false), Activity("camera:two", true)]);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    Equal(CameraStatus.Inactive, SensorSnapshot(sensor, ["camera:one"]).Apps.Single().Status);
+    Equal(false, SensorSnapshot(sensor, ["camera:missing"]).Healthy);
+    Equal(CameraStatus.Unknown, SensorSnapshot(sensor, ["camera:missing"]).Apps.Single().Status);
+});
+Test("sensor failures and resume discard state, not inferred camera-off", () =>
+{
+    var sensor = new SensorState(); sensor.Receive([Activity("camera:one", true)]);
+    long epoch = SensorSnapshot(sensor).Epoch;
+    sensor.Invalidate("Disconnected");
+    Equal(epoch + 1, SensorSnapshot(sensor).Epoch);
+    Equal(false, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Unknown, SensorSnapshot(sensor).Apps.Single().Status);
+    sensor.Receive([Activity("camera:one", false)]);
+    Equal(true, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Inactive, SensorSnapshot(sensor).Apps.Single().Status);
+});
+Test("sensor unresolved clients block release, positively foreign clients do not", () =>
+{
+    var sensor = new SensorState();
+    sensor.Receive([Activity("camera:one", true, 99)]);
+    Equal(false, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Unknown, SensorSnapshot(sensor).Apps.Single().Status);
+    Equal(true, SensorSnapshot(sensor, excluded: [99]).Healthy);
+    sensor.Receive([Activity("camera:one", true), Activity("camera:one", true, 99)]);
+    Equal(false, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    Equal(true, SensorSnapshot(sensor, ["camera:two"]).Healthy);
+});
+Test("sensor PID reuse and future report times cannot activate a new identity", () =>
+{
+    var sensor = new SensorState();
+    sensor.Receive([Activity("camera:one", true, time: sensorProcess.StartTime - 1)]);
+    Equal(false, SensorSnapshot(sensor).Healthy);
+    Equal(CameraStatus.Unknown, SensorSnapshot(sensor).Apps.Single().Status);
+    sensor.Receive([Activity("camera:one", true, time: now.AddSeconds(2).ToFileTime())]);
+    Equal(false, SensorSnapshot(sensor).Healthy);
+});
+Test("camera filters roundtrip, legacy defaults and invalid identities", () =>
+{
+    var settings = JsonSerializer.Deserialize("{}", AppJson.Default.Settings)!;
+    Equal(0, settings.CameraIds.Count);
+    settings.CameraIds = ["camera:one"];
+    settings.Validate();
+    Equal("camera:one", JsonSerializer.Deserialize(JsonSerializer.Serialize(settings, AppJson.Default.Settings),
+        AppJson.Default.Settings)!.CameraIds.Single());
+    settings.CameraIds = ["camera:one", "CAMERA:ONE"]; Throws(settings.Validate);
+    settings.CameraIds = [" "]; Throws(settings.Validate);
+});
+Test("app suggestions recognize communications and packaged camera identities, not arbitrary names", () =>
+{
+    Equal(true, AppPriority.IsCameraOrCommunicationApp("package:Example_abc|WindowsCamera.exe"));
+    Equal(true, AppPriority.IsCameraOrCommunicationApp(@"C:\Example\Signal.exe"));
+    Equal(true, AppPriority.IsCameraOrCommunicationApp(@"C:\Example\ms-teams.exe"));
+    Equal(false, AppPriority.IsCameraOrCommunicationApp(@"C:\Example\steam.exe"));
+});
 Settings Preferences() => new() { AutomationEnabled = true, ActivationMilliseconds = 500, LeaveMilliseconds = 2500,
     Apps = [new("a", "App A", true), new("b", "App B", true)] };
 MonitorSnapshot Snapshot(DateTimeOffset time, CameraStatus a, CameraStatus b = CameraStatus.Inactive, bool healthy = true, long epoch = 1) =>
@@ -243,6 +324,14 @@ Test("malformed mDNS packets and cyclic compression fail explicitly", () =>
 });
 
 var light = new LightDevice("light", "Synthetic", "192.0.2.10", 9123, "test", true);
+using (var content = ElgatoTransport.CreateWriteContent(new(1, 26, 205)))
+{
+    string body = await content.ReadAsStringAsync();
+    Equal("application/json", content.Headers.ContentType!.ToString());
+    Equal((long)Encoding.UTF8.GetByteCount(body), content.Headers.ContentLength!.Value);
+    Equal("{\"numberOfLights\":1,\"lights\":[{\"on\":1,\"brightness\":26,\"temperature\":205}]}", body);
+    passed++; Console.WriteLine("PASS Elgato HTTP writes have explicit byte length, no chunked JSON or charset suffix");
+}
 var fake = new FakeLights();
 OwnershipJournal? journal = null;
 var automation = new LightAutomation(fake, value => journal = value);
@@ -283,6 +372,30 @@ catch (IOException) { }
 Equal(1, journal!.Lights.Count);
 fake.FailWrite = false;
 passed++; Console.WriteLine("PASS failed writes retain recovery intent");
+await failedAutomation.ReconcileAsync(true, [light], default);
+Equal(new LightState(1, 40, 250), fake.State);
+Equal(true, journal!.Lights.Single().AppliedConfirmed);
+await failedAutomation.ReconcileAsync(false, [light], default);
+Equal(new LightState(0, 40, 250), fake.State);
+Equal(0, journal!.Lights.Count);
+passed++; Console.WriteLine("PASS failed un-applied writes retry without being mistaken for external edits");
+fake.FailWrite = true;
+var abandoned = new LightAutomation(fake, value => journal = value);
+try { await abandoned.ReconcileAsync(true, [light], default); throw new Exception("Expected network error"); }
+catch (IOException) { }
+fake.FailWrite = false;
+writes = fake.Writes;
+await abandoned.ReconcileAsync(false, [light], default);
+Equal(writes, fake.Writes);
+Equal(0, journal!.Lights.Count);
+passed++; Console.WriteLine("PASS disabling a failed unapplied activation leaves original light state alone");
+Test("older ownership journals retain confirmed-state restoration semantics", () =>
+{
+    string json = JsonSerializer.Serialize(new OwnershipJournal([new(light, new(0, 40, 250), new(1, 40, 250))]),
+        AppJson.Default.OwnershipJournal).Replace(",\"appliedConfirmed\":true", "", StringComparison.Ordinal);
+    Equal(false, json.Contains("appliedConfirmed"));
+    Equal(true, JsonSerializer.Deserialize(json, AppJson.Default.OwnershipJournal)!.Lights.Single().AppliedConfirmed);
+});
 
 var partial = new FakeLights { FailId = "bad" };
 var multi = new LightAutomation(partial, _ => { });

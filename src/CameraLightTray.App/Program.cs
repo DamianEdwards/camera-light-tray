@@ -50,10 +50,10 @@ internal static class Program
                         window = ReactorApp.OpenWindow(new WindowSpec
                         {
                             Title = demo ? "Camera Light Tray - Synthetic demo" : "Camera Light Tray",
-                            Width = 820, Height = 880, MinWidth = 620, MinHeight = 500,
+                            Width = 820, Height = 1040, MinWidth = 620, MinHeight = 500,
                             ActivateOnOpen = !smoke, Backdrop = BackdropChoice.Of(BackdropKind.Mica)
                         }, () => new Dashboard(session));
-                        window.Closing += (_, e) => { if (!exiting) { e.Cancel = true; window.Hide(); } };
+                        window.Closing += (_, e) => { if (!exiting) { e.Cancel = true; session.HidePreview(); window.Hide(); } };
                     }
                     window.Show();
                     if (!smoke) window.Activate();
@@ -120,11 +120,12 @@ internal static class Program
                     throw new InvalidOperationException("Synthetic UI activation failed.");
                 if (!session.AutomationDetail.Contains("lights on", StringComparison.Ordinal))
                     throw new InvalidOperationException("Synthetic camera did not activate simulated light.");
-                Invoke(window, "DemoStop"); Invoke(window, "SaveRules");
+                Invoke(window, "DemoStop"); Invoke(window, "OpenRules");
             });
             await Task.Delay(3200);
             await OnUI(() =>
             {
+                Invoke(window, "SaveRules");
                 if (!session.AutomationDetail.Contains("restored", StringComparison.Ordinal))
                     throw new InvalidOperationException("Synthetic release did not restore prior state.");
                 if (Find(window.NativeWindow.Content, "SetupMonitor") is not Button { IsEnabled: false })

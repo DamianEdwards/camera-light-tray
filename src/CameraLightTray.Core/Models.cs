@@ -20,12 +20,16 @@ public sealed record Settings
     public int ActivationMilliseconds { get; set; } = 500;
     public int LeaveMilliseconds { get; set; } = 2500;
     public string InterfaceId { get; set; } = "";
+    public List<string> CameraIds { get; set; } = [];
     public List<AppChoice> Apps { get; set; } = [];
     public List<LightDevice> Lights { get; set; } = [];
 
     public void Validate()
     {
-        if (Apps is null || Lights is null) throw new InvalidDataException("App and light lists are required.");
+        if (Apps is null || Lights is null || CameraIds is null) throw new InvalidDataException("App, light and camera lists are required.");
+        if (CameraIds.Count > 256 || CameraIds.Any(string.IsNullOrWhiteSpace) ||
+            CameraIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != CameraIds.Count)
+            throw new InvalidDataException("Camera selections must be unique nonempty device identities.");
         if (ActivationMilliseconds is < 100 or > 10000 || LeaveMilliseconds is < 500 or > 60000)
             throw new InvalidDataException("Activation must be 100-10000ms; leave grace must be 500-60000ms.");
         if (Apps.Count > 500 || Lights.Count > 100) throw new InvalidDataException("Too many configured items.");
@@ -51,5 +55,5 @@ public partial class AppJson : JsonSerializerContext;
 public sealed record LightResponse(int NumberOfLights, LightState[] Lights);
 public sealed record LightRequest(int NumberOfLights, LightState[] Lights);
 public sealed record AccessoryInfo(string? DisplayName, string? ProductName, string? SerialNumber);
-public sealed record OwnedLight(LightDevice Device, LightState Before, LightState Applied);
+public sealed record OwnedLight(LightDevice Device, LightState Before, LightState Applied, bool AppliedConfirmed = true);
 public sealed record OwnershipJournal(List<OwnedLight> Lights);

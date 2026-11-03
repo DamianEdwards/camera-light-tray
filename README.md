@@ -9,17 +9,29 @@ for the published executables.
 
 This is not yet a production camera-activity detector. Read the limitations
 below before using it unattended. Automation, login startup, new app selections
-and newly discovered lights are all opt-in. The app captures no camera frames,
-audio, or ETL files and sends no telemetry.
+and newly discovered lights are all opt-in. Background monitoring uses camera
+activity metadata only and needs **no elevation or installed helper**.
+An explicit local camera preview is available for verification; it never
+records images, audio or video. The app sends no telemetry.
 
 ## What works in the spike
 
 - Normal-user tray UI with friendly app names, per-app selections and camera
   status; saved choices survive process restarts. Packaged apps use package
   family plus executable identity, desktop apps use full executable paths.
-- Aggregate capture-engine preview/record activity across engines, processes
-  and selected apps. Brief activations are debounced (500ms default); leave
-  grace defaults to 2500ms.
+- Windows Media Foundation **Sensor Activity Monitor** reports identify
+  streaming processes and their actual camera devices, including an already
+  active Windows Camera session. Select all cameras or a subset. Activity
+  aggregates across selected apps and cameras; activation debounce defaults
+  to 500ms and leave grace to 2500ms.
+- Separate Overview, Apps, Cameras, Lights, and Rules pages. App suggestions
+  prioritize saved selections, active clients, installed packages declaring
+  webcam capability, and known communications apps such as Teams and Signal.
+  Search or show all running processes for other apps. Suggestions are not
+  proof of permission, and never enable an app automatically.
+- Explicit shared-read-only local preview, with camera selection and physical
+  light-state readback. The preview selector and automation camera filter are
+  independent. Preview stops on leaving Overview, closing the window, or exit.
 - Explicit LAN-interface selection, mDNS `_elg._tcp.local` discovery, read-only
   connection diagnostics and manual IPv4 configuration for port 9123.
   Discovery joins the standard IPv4 multicast group on UDP 5353 using the
@@ -29,8 +41,9 @@ audio, or ETL files and sends no telemetry.
   temperature are preserved. TLS-advertising models are visibly unsupported.
 - Previous-state restoration, persistent crash-recovery intent, external-change
   ownership relinquishment, pause, manual-on and manual-off/release.
-- A fixed-function LocalService helper and local authenticated IPC. App
-  selections, light networking and preferences remain in the normal-user UI.
+- An optional experimental fixed-function LocalService ETW helper and local
+  authenticated IPC remain available for diagnostics and installed-service CI.
+  **The UI uses normal-user sensor reports, not this legacy helper.**
 
 ## Run a published build
 
@@ -46,15 +59,25 @@ a stable release.
    WinApp SDK 1.x is not sufficient. This repository does not download or bundle
    the runtime into the application ZIP.
 2. Extract the entire ZIP into a stable directory and run `CameraLightTray.exe`
-   as yourself, **not as administrator**. Before service setup the camera state
-   is unknown; the UI and preferences work without elevation.
-3. Use **Set up / repair monitor (administrator)** if you choose to install
-   the helper. This is the only in-app elevation action. Inspect the unsigned
-   spike and its setup script before approving elevation; no installer or
-   permission warning is bypassed.
-4. Restart camera apps that were running before the UI connected to the helper. Choose
-   apps and lights, test light connections (read only), and explicitly enable
-   automation. The helper's reported status must be healthy.
+   as yourself, **not as administrator**. The Overview should report
+   **Windows sensor activity reports connected**. Do not install/repair the
+   legacy helper to fix a sensor-report or light-networking problem.
+3. In **Apps**, select apps such as Windows Camera, Teams or Signal.
+   In **Cameras**, optionally select trigger cameras; no checked camera means all cameras.
+   In **Lights**, choose your physical LAN interface, discover lights, test
+   connections (read only), and select the lights to automate.
+4. On **Overview**, explicitly enable physical automation. Open a selected
+   app's camera: the selected lights should turn on after debounce and restore
+   their previous state after capture stops plus leave grace.
+
+For a visible verification, choose the same camera in **Local camera preview**
+and press **Start preview**. Preview alone does not grant automation permission:
+select this exact `CameraLightTray.exe` under Apps if you want its preview to
+trigger lights. Alternatively, leave it unselected and watch another selected
+app's activation/release while the preview stays live. Desktop app identities
+include their full path, so moving a portable build requires reselecting it.
+Camera access must be allowed in Windows privacy settings. A failed or
+unavailable camera reports an explicit preview error; it never starts recording.
 
 Closing the window hides it; right-click the tray icon to pause/resume or exit.
 **Start at login** writes only the current user's Run registration. Normal
@@ -62,7 +85,11 @@ login launches the UI hidden and never invokes setup or UAC. Leave the app in
 its stable location when enabling login startup. Disable that preference
 before moving/removing the UI.
 
-### Setup, repair, update and removal
+### Optional legacy ETW helper: setup, repair and removal
+
+**Skip this section for normal use.** The helper is not needed by, or connected
+to, the normal-user UI sensor source. Its setup action is deliberately isolated
+under **Rules / helper** and is never invoked by launching the app.
 
 The ZIP contains `setup-monitor.ps1` and `monitor\CameraLightTray.Monitor.exe`.
 Setup copies **only that fixed helper executable** into
@@ -72,9 +99,10 @@ ordinary-user writes, and registers `CameraLightTrayMonitor` as an automatic
 to Performance Log Users. The UI is not elevated and never runs from the
 service. Setup does not enable physical light automation.
 
-For an update, extract the new ZIP, exit the UI, run its explicit setup/repair
-action to stop/replace/start the helper, then reopen the UI. Restart monitored
-apps to establish a new observation baseline. There is no automatic updater.
+For a normal UI update, exit the app and replace/extract its portable files;
+no service repair is necessary. To update the optional helper, use the new
+ZIP's explicit legacy setup/repair action to stop/replace/start it. There is
+no automatic updater.
 To remove the helper, explicitly run the following in an elevated PowerShell
 from the extracted ZIP:
 
@@ -86,15 +114,14 @@ This removes the named service and its fixed executable, not your preferences.
 The directories can then be removed manually. Cancelled or failed setup is
 reported rather than silently treated as success. Provider-specific ETW
 permissions are checked by the actual `StartTrace`/`EnableTraceEx2` calls: if
-LocalService is denied, the UI stays unknown and shows the error. This spike
+LocalService is denied, the helper reports an unhealthy snapshot. This spike
 does **not** broaden provider ACLs or silently fall back to an elevated UI.
 
-After successful setup, the UI reconnects automatically. A connected-helper
-heartbeat timeout is different from setup failure: it means the helper did not
-send a fresh snapshot within four seconds. State remains unknown while the UI
-retries; repeatedly running setup is not the appropriate response to a slow
-helper. Process-session queries use the direct Windows API rather than
-refreshing the entire system process table once per process.
+The installed-service integration check validates the helper's authenticated
+snapshots; a service setup success is not proof of ETW/IPC health. The legacy
+pipe client distinguishes a four-second heartbeat timeout from setup failure.
+Process-session queries use the direct Windows API rather than refreshing the
+entire system process table once per process.
 
 ### Why a ZIP rather than MSIX for now?
 
@@ -108,9 +135,10 @@ need separate treatment.
 
 For this spike the ZIP keeps normal UI development and launching non-elevated
 while making machine setup an explicit, inspectable action. It also avoids
-claiming a zero-admin camera-monitor installation. A future signed MSIX can
-declare the service and a shared framework dependency; no arbitrary elevated
-custom action is needed or implied. No Store submission workflow is provided.
+requiring a machine-wide installer for the normal-user sensor API. A future
+signed MSIX can declare the shared framework dependency and, if retained, the
+optional service; no arbitrary elevated custom action is needed or implied.
+No Store submission workflow is provided.
 
 References:
 [MSIX services](https://learn.microsoft.com/windows/msix/packaging-tool/convert-an-installer-with-services),
@@ -128,14 +156,14 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.0
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.0\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.3
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.3\CameraLightTray.exe
 ```
 
 `--isolated` requires a separate data directory, disables setup and login
 registration, and starts automation off even if that directory previously
-enabled it. It may read an already-installed shared monitor; use `--demo` for
-fully synthetic camera/light behavior with **no** ETW, service connection,
+enabled it. It uses normal-user sensor metadata; use `--demo` for
+fully synthetic camera/light behavior with **no** camera access, ETW, service connection,
 network discovery or physical light writes. Demo and smoke modes also require
 an explicit data directory. Use a different directory per worktree; a file
 lock prevents concurrent instances from sharing one directory.
@@ -154,7 +182,24 @@ the same package version. Do not build from or modify a reference checkout.
 
 ## Camera source and honest uncertainty
 
-The helper enables only provider
+The active UI source is
+[`MFCreateSensorActivityMonitor`](https://learn.microsoft.com/windows/win32/api/mfidl/nf-mfidl-mfcreatesensoractivitymonitor)
+and `IMFSensorActivitiesReportCallback`. Windows supplies current sensor reports,
+device symbolic links, streaming flags, client PIDs and report times. Each
+successful report replaces the previous inventory; it is not reconstructed
+from guessed start/stop events or stale registry values. Process identities
+are scoped to the current Windows user/session and checked against creation
+time to reject PID reuse. Already-streaming clients can be identified at
+startup. Native callbacks update state immediately; periodic process/device
+refreshes and UI snapshots do not require continuous camera-frame events.
+
+Local verification covered a Logitech Brio with Windows Camera and the app's
+shared preview, and two classic Elgato lights on a routed LAN with source-bound
+HTTP. It does not certify every driver, virtual camera, direct-driver capture
+path or app combination. Only capture activity represented by Windows' sensor
+monitor is supported; test the actual combination before relying on automation.
+
+The **optional legacy helper**, not the active UI source, enables only provider
 `Microsoft-Windows-MediaFoundation-MFCaptureEngine`
 (`B8197C10-845F-40CA-82AB-9341E98CFC2B`), with an ETW event-ID filter for
 completed preview start/stop **207/209** and record-mode start/stop **211/213**.
@@ -167,9 +212,9 @@ camera stopping. FrameServer per-frame events are not enabled.
 The registry webcam ConsentStore is **not a live sensor** and is not read as
 one. Stale registry values never become an inactive state.
 
-Important limitations and safeguards:
+Legacy ETW limitations:
 
-- Cameras already active when the UI connects to the helper may not be reconstructed from
+- Cameras already active when a legacy client connects may not be reconstructed from
   these events. A process predating the observation epoch stays unknown even
   after a matched pair; restart that app to establish a supported-path
   baseline. A process created after the observation boundary has a known
@@ -184,7 +229,7 @@ Important limitations and safeguards:
   catalog health. Successful capture events from unresolved process owners
   in this client's session do block automated release until ownership is
   resolved or the process exits; they are never silently discarded as inactive.
-  Protected capture processes may therefore prevent unattended automation.
+  Protected capture processes may therefore prevent legacy ETW automation.
   The helper must be evaluated under LocalService on each target Windows
   build; running the UI smoke does not validate provider access.
 - Duplicate starts, unmatched stops, schema errors, event loss, helper
@@ -193,8 +238,18 @@ Important limitations and safeguards:
   to re-establish baselines. This conservative spike can leave lights on until
   explicit pause/manual release or app/helper restart.
 - Process death is confirmed by refresh of the process catalog; PID reuse does
-  not inherit an older process's engines. The app holds its last automation
-  demand on unhealthy/missing sensor data.
+  not inherit an older process's engines. Legacy tracking cannot replace a
+  complete sensor inventory.
+
+Shared safeguards:
+
+- The normal-user sensor begins unknown until a valid report arrives. Errors,
+  unavailable selected cameras, unattributable streaming clients, PID/time
+  mismatches, resume and stale/missing snapshots hold demand rather than
+  treating uncertainty as camera-off. Positively identified other-user/session
+  clients are excluded. Inaccessible unrelated idle processes do not poison
+  the source; an unresolved streaming client relevant to this session does.
+- The app holds its last automation demand on unhealthy/missing sensor data.
 - A fresh healthy snapshot with no matching running process can establish
   absence. Any selected active app requests light-on; any selected unknown app
   blocks automatic release. Changing selections is a normal-user preference.
@@ -225,7 +280,7 @@ enumeration; image paths and creation times are queried under the authenticated
 client's impersonation, not by opening user-process tokens as LocalService.
 No client supplies process paths or owner SIDs. Only a bounded queue of
 lifecycle metadata crosses from the ETW callback into per-client trackers;
-overflow becomes unknown state. The UI verifies the pipe's LocalService
+overflow becomes unknown state. The legacy pipe client verifies the LocalService
 owner before accepting data; ordinary users cannot assign that owner to a
 spoofed pipe. Same-user processes are the same trust boundary as this user's
 preferences; administrators can replace the installed helper.

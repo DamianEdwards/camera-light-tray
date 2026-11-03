@@ -75,10 +75,14 @@ internal static unsafe partial class ProcessCatalog
 
     // Called only inside the authenticated client's impersonation scope. WTS supplies
     // owner SIDs; a missing SID is not evidence that a process belongs to this user.
-    internal static (ProcessIdentity[] Processes, bool Uncertain, string Detail, int[] UnresolvedOwners) Enumerate(string userSid, int session)
+    internal static bool IsOtherSession(int pid, int session) =>
+        ProcessIdToSessionId((uint)pid, out uint actual) != 0 && actual != session;
+
+    internal static (ProcessIdentity[] Processes, bool Uncertain, string Detail, int[] UnresolvedOwners, int[] OtherOwners) Enumerate(string userSid, int session)
     {
         var processes = new List<ProcessIdentity>();
         var unresolvedOwners = new List<int>();
+        var otherOwners = new List<int>();
         int unreadable = 0, changed = 0;
         var failures = new HashSet<string>();
         long enumerationStarted = DateTimeOffset.UtcNow.ToFileTime();
@@ -92,7 +96,7 @@ internal static unsafe partial class ProcessCatalog
             {
                 if (entry.Pid == 0 || entry.Session != session) continue;
                 string? owner = entry.Sid == 0 ? null : new SecurityIdentifier(entry.Sid).Value;
-                if (owner is not null && owner != userSid) continue;
+                if (owner is not null && owner != userSid) { otherOwners.Add((int)entry.Pid); continue; }
                 try
                 {
                     var identity = Read((int)entry.Pid, owner, out string failure);
@@ -122,6 +126,6 @@ internal static unsafe partial class ProcessCatalog
         bool uncertain = unreadable + changed > 0;
         return (processes.ToArray(), uncertain, uncertain ?
             $"Client process identities incomplete (unreadable: {unreadable}; changed: {changed}; " +
-            $"operations: {string.Join(", ", failures)}). Camera state is unknown, not inactive." : "", unresolvedOwners.ToArray());
+            $"operations: {string.Join(", ", failures)}). Camera state is unknown, not inactive." : "", unresolvedOwners.ToArray(), otherOwners.ToArray());
     }
 }

@@ -4,6 +4,7 @@ using System.Security.Principal;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Storage;
 using Windows.Storage.FileProperties;
+using Windows.Devices.Enumeration;
 using CameraLightTray.App.Platform;
 using CameraLightTray.Core;
 
@@ -19,8 +20,17 @@ internal sealed class AppSession
     private Settings _settings;
     private MonitorSnapshot? _snapshot;
     private Task? _loop, _monitor;
+    private readonly SensorState _sensor = new();
+    private ProcessIdentity[] _sensorProcesses = [];
+    private int[] _sensorOtherOwners = [];
+    private CameraDevice[] _sensorCameras = [];
+    private int _sensorSession;
+    private volatile bool _restartSensor;
     private CameraApp[] _catalog = [];
+    private CameraApp[] _installedCameraApps = [];
+    private readonly CameraPreview _preview;
     private readonly Dictionary<string, string> _icons = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _lightReadings = new();
     internal event Action? Changed;
     internal int Revision { get; private set; }
     internal bool Isolated { get; }
@@ -35,21 +45,41 @@ internal sealed class AppSession
     internal string AppPath { get; set; } = "";
     internal string LightAddress { get; set; } = "";
     internal string AppSearch { get; set; } = "";
+    internal bool ShowAllApps { get; set; }
+    internal int Page { get; set; }
+    internal string PreviewCameraId { get; set; } = "";
+    internal string PreviewDetail { get; private set; } = "Preview is stopped. It never records or uploads images.";
     internal string ActivationInput { get; set; } = "";
     internal string LeaveInput { get; set; } = "";
     internal LanAddress[] Interfaces { get; private set; } = [];
+    internal CameraDevice[] Cameras { get; private set; } = [];
     internal string? IconPath(string appKey) { lock (_gate) return _icons.GetValueOrDefault(appKey); }
-    internal Settings Preferences { get { lock (_gate) return _settings with { Apps = [.. _settings.Apps], Lights = [.. _settings.Lights] }; } }
-    internal CameraApp[] Apps { get { lock (_gate) return _catalog.UnionBy(_snapshot?.Apps ?? [], a => a.Key, StringComparer.OrdinalIgnoreCase)
+    internal string LightReading(string id) { lock (_gate) return _lightReadings.GetValueOrDefault(id, "Not read yet."); }
+    internal Settings Preferences { get { lock (_gate) return _settings with { Apps = [.. _settings.Apps], Lights = [.. _settings.Lights], CameraIds = [.. _settings.CameraIds] }; } }
+    internal CameraApp[] Apps { get { lock (_gate) return _installedCameraApps.UnionBy(_catalog, a => a.Key, StringComparer.OrdinalIgnoreCase)
+        .UnionBy(_snapshot?.Apps ?? [], a => a.Key, StringComparer.OrdinalIgnoreCase)
         .UnionBy(_settings.Apps.Select(a => new CameraApp(a.Key, a.Name, CameraStatus.Inactive)), a => a.Key,
             StringComparer.OrdinalIgnoreCase)
         .Select(a => a with { Status = _snapshot?.Apps.FirstOrDefault(p => p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))?.Status ??
             (_snapshot?.Healthy == true ? CameraStatus.Inactive : CameraStatus.Unknown) })
-        .OrderBy(a => a.Name).ToArray(); } }
+        .OrderByDescending(a => _settings.Apps.Any(p => p.Enabled && p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase)))
+        .ThenByDescending(a => a.Status == CameraStatus.Active)
+        .ThenByDescending(a => _installedCameraApps.Any(p => p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase)) ||
+            AppPriority.IsCameraOrCommunicationApp(a.Key))
+        .ThenBy(a => a.Name).ToArray(); } }
+    internal bool Suggested(CameraApp app) => Demo || app.Status == CameraStatus.Active ||
+        Preferences.Apps.Any(a => a.Enabled && a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)) ||
+        _installedCameraApps.Any(a => a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)) ||
+        AppPriority.IsCameraOrCommunicationApp(app.Key);
 
     internal AppSession(Storage storage, bool isolated, bool demo)
     {
         _storage = storage; Isolated = isolated; Demo = demo;
+        _preview = new(error => Post(() =>
+        {
+            Report(error);
+            _ = StopPreviewAfterFailureAsync();
+        }));
         _settings = storage.Load("settings.json", AppJson.Default.Settings) ?? new();
         _settings.Validate();
         ActivationInput = _settings.ActivationMilliseconds.ToString();
@@ -88,10 +118,110 @@ internal sealed class AppSession
     internal void Start()
     {
         if (!Demo)
-            _monitor = MonitorClient.RunAsync(snapshot => { lock (_gate) _snapshot = snapshot; },
-                detail => Post(() => { SensorDetail = detail; Notify(); }), _stop.Token);
+            _monitor = Task.Run(() => MonitorSensorsAsync(_stop.Token));
         _loop = RunAsync(_stop.Token);
     }
+    private async Task MonitorSensorsAsync(CancellationToken token)
+    {
+        using var user = WindowsIdentity.GetCurrent();
+        using var process = Process.GetCurrentProcess();
+        string sid = user.User!.Value;
+        int session = process.SessionId;
+        _sensorSession = session;
+        try
+        {
+            var installed = InstalledCameraApps.Read(sid);
+            lock (_gate) _installedCameraApps = installed;
+            do
+            {
+                _restartSensor = false;
+                using var monitor = new SensorActivityMonitor(
+                    reports =>
+                    {
+                        MonitorSnapshot snapshot;
+                        lock (_gate) { _sensor.Receive(reports); snapshot = UpdateSensorSnapshot(); }
+                        Post(() => { SensorDetail = snapshot.Detail; Notify(); });
+                    },
+                    error =>
+                    {
+                        MonitorSnapshot snapshot;
+                        lock (_gate) { _sensor.Invalidate(error); snapshot = UpdateSensorSnapshot(); _restartSensor = true; }
+                        Post(() => { SensorDetail = snapshot.Detail; Notify(); });
+                    });
+                monitor.Start();
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+                int refresh = 0;
+                CameraDevice[] cameras = [];
+                do
+                {
+                    if (refresh++ % 5 == 0)
+                    {
+                        var devices = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask(token);
+                        cameras = devices.Select(d => new CameraDevice(d.Id, d.Name)).OrderBy(c => c.Name).ToArray();
+                        var currentCameras = cameras;
+                        Post(() =>
+                        {
+                            Cameras = currentCameras;
+                            if (string.IsNullOrEmpty(PreviewCameraId)) PreviewCameraId = Cameras.FirstOrDefault()?.Id ?? "";
+                            Notify();
+                        });
+                    }
+                    var catalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate(sid, session);
+                    MonitorSnapshot snapshot;
+                    lock (_gate)
+                    {
+                        _sensorProcesses = catalog.Processes; _sensorOtherOwners = catalog.OtherOwners; _sensorCameras = cameras;
+                        snapshot = UpdateSensorSnapshot();
+                    }
+                    Post(() => { SensorDetail = snapshot.Detail; Notify(); });
+                } while (!_restartSensor && await timer.WaitForNextTickAsync(token));
+            } while (!token.IsCancellationRequested);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is System.Runtime.InteropServices.COMException or
+            System.ComponentModel.Win32Exception or UnauthorizedAccessException or IOException or
+            DllNotFoundException or EntryPointNotFoundException)
+        {
+            lock (_gate) { _snapshot = null; _sensor.Invalidate(ex.Message); }
+            Post(() => { SensorDetail = "Windows sensor monitor unavailable: " + ex.Message + ". Camera state is unknown."; Notify(); });
+        }
+    }
+    private MonitorSnapshot UpdateSensorSnapshot()
+    {
+        var excluded = _sensorOtherOwners.Concat(_sensor.StreamingProcesses.Where(pid =>
+            CameraLightTray.Monitor.ProcessCatalog.IsOtherSession(pid, _sensorSession))).ToArray();
+        return _snapshot = _sensor.Snapshot(_sensorProcesses, excluded, _sensorCameras,
+            _settings.CameraIds, DateTimeOffset.UtcNow);
+    }
+    internal void SelectCamera(CameraDevice camera, bool enabled) => Change(s =>
+    {
+        s.CameraIds.RemoveAll(id => id.Equals(camera.Id, StringComparison.OrdinalIgnoreCase));
+        if (enabled) s.CameraIds.Add(camera.Id);
+    });
+    internal void MonitorAllCameras() => Change(s => s.CameraIds.Clear());
+    internal void AttachPreview(Microsoft.UI.Xaml.Controls.MediaPlayerElement element) => _preview.Attach(element);
+    internal async Task StartPreviewAsync()
+    {
+        if (Demo) throw new InvalidOperationException("Physical camera preview is disabled in synthetic mode.");
+        var camera = Cameras.FirstOrDefault(c => c.Id == PreviewCameraId) ??
+            throw new InvalidOperationException("Choose an available camera for preview.");
+        await _preview.StartAsync(camera.Id);
+        PreviewDetail = _preview.Playing ? "Live local preview: " + camera.Name + ". No recording. Select CameraLightTray under Apps to test this preview's real sensor activity." :
+            "Preview stopped.";
+        Notify();
+    }
+    internal async Task StopPreviewAsync()
+    {
+        await _preview.StopAsync();
+        PreviewDetail = "Preview stopped; camera stream released.";
+        Notify();
+    }
+    private async Task StopPreviewAfterFailureAsync()
+    {
+        try { await StopPreviewAsync(); }
+        catch (Exception ex) { Report("Preview cleanup failed: " + ex.Message); }
+    }
+    internal void HidePreview() => _ = StopPreviewAfterFailureAsync();
     private async Task RunAsync(CancellationToken token)
     {
         int ticks = 0;
@@ -101,11 +231,7 @@ internal sealed class AppSession
             do
             {
                 if (!Demo && ticks++ % 20 == 0)
-                {
-                    var list = Catalog();
-                    lock (_gate) _catalog = list;
-                    await CacheIconsAsync(list, token);
-                }
+                    await CacheIconsAsync(Apps.Where(Suggested).Take(50).ToArray(), token);
                 var preferences = Preferences;
                 MonitorSnapshot? snapshot;
                 lock (_gate)
@@ -118,6 +244,9 @@ internal sealed class AppSession
                 {
                     await _automation.ReconcileAsync(desired, preferences.Lights, token);
                     Post(() => { AutomationDetail = _automation.Status; Notify(); });
+                    if (!Demo && ticks % 16 == 0)
+                        foreach (var light in preferences.Lights.Where(l => l.Enabled && !l.Tls))
+                            await ReadLightAsync(light, token);
                 }
                 catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
                     OperationCanceledException or NotSupportedException or UnauthorizedAccessException)
@@ -126,28 +255,6 @@ internal sealed class AppSession
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex) { Post(() => Report("Automation worker stopped: " + ex.Message)); }
-    }
-    private static CameraApp[] Catalog()
-    {
-        using var user = WindowsIdentity.GetCurrent();
-        using var current = Process.GetCurrentProcess();
-        int sessionId = current.SessionId;
-        var list = new List<CameraApp>();
-        foreach (var process in Process.GetProcesses())
-        {
-            using (process)
-            {
-                try
-                {
-                    if (process.SessionId != sessionId || process.MainWindowHandle == 0) continue;
-                    var identity = CameraLightTray.Monitor.ProcessCatalog.Read(process.Id);
-                    if (identity?.UserSid == user.User?.Value)
-                        list.Add(new(identity!.AppKey, identity.Name, CameraStatus.Unknown));
-                }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or Win32Exception) { }
-            }
-        }
-        return list.DistinctBy(a => a.Key, StringComparer.OrdinalIgnoreCase).ToArray();
     }
     private async Task CacheIconsAsync(CameraApp[] apps, CancellationToken token)
     {
@@ -283,8 +390,25 @@ internal sealed class AppSession
     internal async Task TestLightAsync(LightDevice device)
     {
         if (Demo) { Notice = "Simulated light reachable."; Notify(); return; }
-        var state = await new ElgatoTransport().ReadAsync(device, _stop.Token);
+        var state = await ReadLightAsync(device, _stop.Token);
         Post(() => { Notice = $"{device.Name}: reachable, {(state.On == 1 ? "on" : "off")}, brightness {state.Brightness}%. Read-only test."; Notify(); });
+    }
+    private async Task<LightState> ReadLightAsync(LightDevice device, CancellationToken token)
+    {
+        try
+        {
+            var state = await new ElgatoTransport().ReadAsync(device, token);
+            lock (_gate) _lightReadings[device.Id] = $"{(state.On == 1 ? "ON" : "OFF")} - brightness {state.Brightness}% - temperature {state.Temperature} (device readback)";
+            Post(Notify);
+            return state;
+        }
+        catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
+            OperationCanceledException && !token.IsCancellationRequested)
+        {
+            lock (_gate) _lightReadings[device.Id] = "Readback failed: " + ex.Message;
+            Post(Notify);
+            throw;
+        }
     }
     internal void SetStartup(bool enabled)
     {
@@ -298,11 +422,15 @@ internal sealed class AppSession
         await Setup.InstallAsync();
         Post(() =>
         {
-            Notice = "Monitor setup completed. The UI reconnects automatically; the camera monitor status below reports connection health.";
+            Notice = "Legacy helper setup completed. It is not the active Windows sensor source; setup success alone does not validate ETW or IPC health.";
             Notify();
         });
     }
-    internal void Resume() { lock (_gate) _snapshot = null; SensorDetail = "System resumed; waiting for fresh monitor state."; Notify(); }
+    internal void Resume()
+    {
+        lock (_gate) { _snapshot = null; _sensor.Invalidate("System resumed; waiting for a fresh camera activity report."); _restartSensor = true; }
+        SensorDetail = "System resumed; waiting for fresh monitor state."; Notify();
+    }
     internal void DemoCapture(bool active)
     {
         lock (_gate) _snapshot = new(1, Revision + 1, 1, DateTimeOffset.UtcNow, true, "Synthetic capture.",
@@ -311,11 +439,16 @@ internal sealed class AppSession
     }
     internal async Task StopAsync()
     {
+        var failures = new List<Exception>();
         _stop.Cancel();
-        if (_loop is not null) await _loop;
-        if (_monitor is not null) await _monitor;
+        try { await StopPreviewAsync(); }
+        catch (Exception ex) { failures.Add(ex); }
+        try { await Task.WhenAll(_loop ?? Task.CompletedTask, _monitor ?? Task.CompletedTask); }
+        catch (Exception ex) { failures.Add(ex); }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-        await _automation.ReconcileAsync(false, Preferences.Lights, timeout.Token);
+        try { await _automation.ReconcileAsync(false, Preferences.Lights, timeout.Token); }
+        catch (Exception ex) { failures.Add(ex); }
+        if (failures.Count > 0) throw new AggregateException("Camera/light cleanup did not complete successfully.", failures);
     }
     private sealed class DemoLights : ILightTransport
     {

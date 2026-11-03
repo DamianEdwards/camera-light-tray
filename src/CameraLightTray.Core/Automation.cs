@@ -82,7 +82,23 @@ public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJ
             try
             {
                 var current = await transport.ReadAsync(item.Device, token);
-                if (current != item.Applied)
+                if (!item.AppliedConfirmed && current == item.Before)
+                {
+                    if (desired && enabled.ContainsKey(item.Device.Id))
+                    {
+                        await transport.WriteAsync(item.Device, item.Applied, token);
+                        _owned[item.Device.Id] = item with { AppliedConfirmed = true };
+                        Save();
+                        Status = "Camera activity: lights on (owned changes only).";
+                    }
+                    else
+                    {
+                        _owned.Remove(item.Device.Id);
+                        Save();
+                        Status = "Previous light state unchanged; pending activation released.";
+                    }
+                }
+                else if (current != item.Applied)
                 {
                     _owned.Remove(item.Device.Id);
                     _suppressed.Add(item.Device.Id);
@@ -113,9 +129,11 @@ public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJ
                 var applied = before with { On = 1 };
                 if (before == applied) continue;
                 // Persist intent before the write, so a crash cannot lose the restoration record.
-                _owned.Add(device.Id, new(device, before, applied));
+                _owned.Add(device.Id, new(device, before, applied, AppliedConfirmed: false));
                 Save();
                 await transport.WriteAsync(device, applied, token);
+                _owned[device.Id] = _owned[device.Id] with { AppliedConfirmed = true };
+                Save();
                 Status = "Camera activity: lights on (owned changes only).";
             }
             catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
