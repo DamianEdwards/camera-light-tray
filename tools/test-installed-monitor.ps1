@@ -63,11 +63,16 @@ try {
     $probe = (Resolve-Path -LiteralPath $ProbeExecutable).Path
     $process = Start-Process -FilePath $probe -Credential $credential -LoadUserProfile `
         -ArgumentList @('--monitor-integration', "`"$result`"") -WorkingDirectory $output -PassThru
+    # Windows PowerShell needs the credentialed child's handle cached before exit.
+    $null = $process.Handle
     if (-not $process.WaitForExit(45000)) { throw 'Standard-user integration probe timed out.' }
     if (-not (Test-Path -LiteralPath $result)) { throw "Probe produced no result (exit $($process.ExitCode))." }
     $text = Get-Content -LiteralPath $result -Raw
     Write-Output $text
-    if ($process.ExitCode -ne 0 -or $text -notlike 'PASS:*') { throw 'Installed helper integration failed.' }
+    if ($null -eq $process.ExitCode) { throw 'Standard-user probe exit code unavailable.' }
+    if ($process.ExitCode -ne 0 -or $text -notlike 'PASS:*') {
+        throw "Installed helper integration failed (probe exit $($process.ExitCode))."
+    }
 }
 finally {
     if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id }
