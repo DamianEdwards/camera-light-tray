@@ -5,8 +5,16 @@ using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using CameraLightTray.App.Platform;
+using CameraLightTray.Tests;
 using CameraLightTray.Core;
 
+if (args is ["--monitor-integration", var resultPath])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+    try { await InstalledMonitorCheck.RunAsync(resultPath); }
+    catch (Exception ex) { File.WriteAllText(resultPath, "FAIL: " + ex.Message); Environment.ExitCode = 1; }
+    return;
+}
 int passed = 0;
 void Test(string name, Action test)
 {

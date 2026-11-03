@@ -42,6 +42,25 @@ jobs:
           }
           if (-not $installed) { Add-AppxPackage -Path $runtime.PackagePath }
           .\tools\smoke.ps1 -Executable .\artifacts\package-0.1.0\CameraLightTray.exe
+      - name: Install LocalService helper and verify standard-user IPC on disposable runner
+        shell: powershell
+        timeout-minutes: 5
+        run: .\tools\test-installed-monitor.ps1
+      - name: Guarantee installed-helper integration cleanup
+        if: always()
+        shell: powershell
+        run: |
+          if (Test-Path .\artifacts\package-0.1.0\setup-monitor.ps1) {
+            .\tools\test-installed-monitor.ps1 -CleanupOnly
+          }
+      - name: Retain installed-helper integration result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: installed-monitor-integration
+          path: artifacts/monitor-integration/result.txt
+          if-no-files-found: warn
+          retention-days: 7
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: unsigned-development-win-x64
