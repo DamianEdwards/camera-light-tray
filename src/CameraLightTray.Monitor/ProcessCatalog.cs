@@ -34,14 +34,19 @@ internal static unsafe partial class ProcessCatalog
         internal long UserTime, KernelTime;
     }
 
-    internal static ProcessIdentity? Read(int pid, string? verifiedSid = null)
+    internal static ProcessIdentity? Read(int pid, string? verifiedSid = null) => Read(pid, verifiedSid, out _);
+
+    private static ProcessIdentity? Read(int pid, string? verifiedSid, out string failure)
     {
+        failure = "";
         using var handle = OpenProcess(0x1000, 0, (uint)pid);
-        if (handle.IsInvalid) return null;
+        if (handle.IsInvalid) { failure = "OpenProcess:" + Marshal.GetLastPInvokeError(); return null; }
         var buffer = new char[32768]; uint size = (uint)buffer.Length;
         fixed (char* name = buffer)
-            if (QueryFullProcessImageName(handle, 0, name, ref size) == 0) return null;
-        if (GetProcessTimes(handle, out long start, out _, out _, out _) == 0) return null;
+            if (QueryFullProcessImageName(handle, 0, name, ref size) == 0)
+            { failure = "QueryFullProcessImageName:" + Marshal.GetLastPInvokeError(); return null; }
+        if (GetProcessTimes(handle, out long start, out _, out _, out _) == 0)
+        { failure = "GetProcessTimes:" + Marshal.GetLastPInvokeError(); return null; }
         if (verifiedSid is null)
         {
             if (OpenProcessToken(handle, 8, out var token) == 0) return null;
@@ -67,10 +72,11 @@ internal static unsafe partial class ProcessCatalog
 
     // Called only inside the authenticated client's impersonation scope. WTS supplies
     // owner SIDs without requesting TOKEN_QUERY on another account's process.
-    internal static (ProcessIdentity[] Processes, bool Uncertain) Enumerate(string userSid, int session)
+    internal static (ProcessIdentity[] Processes, bool Uncertain, string Detail) Enumerate(string userSid, int session)
     {
         var processes = new List<ProcessIdentity>();
-        bool uncertain = false;
+        int unknownOwners = 0, unreadable = 0, changed = 0;
+        var failures = new HashSet<string>();
         long enumerationStarted = DateTimeOffset.UtcNow.ToFileTime();
         uint level = 1;
         if (EnumerateWtsProcesses(0, ref level, (uint)session, out nint memory, out uint count) == 0)
@@ -81,20 +87,23 @@ internal static unsafe partial class ProcessCatalog
             foreach (var entry in entries)
             {
                 if (entry.Pid == 0 || entry.Session != session) continue;
-                if (entry.Sid == 0) { uncertain = true; continue; }
+                if (entry.Sid == 0) { unknownOwners++; continue; }
                 if (new SecurityIdentifier(entry.Sid).Value != userSid) continue;
                 try
                 {
-                    var identity = Read((int)entry.Pid, userSid);
+                    var identity = Read((int)entry.Pid, userSid, out string failure);
                     // A PID created after enumeration began might have replaced
                     // the process whose owner SID WTS returned.
                     if (identity is not null && identity.StartTime <= enumerationStarted) processes.Add(identity);
-                    else uncertain = true;
+                    else if (identity is not null) changed++;
+                    else { unreadable++; failures.Add(failure); }
                 }
                 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or
                     System.ComponentModel.Win32Exception)
                 {
-                    uncertain = true; // Retry next heartbeat; never infer absence from an incomplete read.
+                    unreadable++;
+                    failures.Add(ex is System.ComponentModel.Win32Exception win32 ?
+                        "ProcessIdentity:" + win32.NativeErrorCode : ex.GetType().Name);
                 }
             }
         }
@@ -103,6 +112,9 @@ internal static unsafe partial class ProcessCatalog
             if (FreeWtsProcesses(1, memory, count) == 0)
                 throw new System.ComponentModel.Win32Exception(Marshal.GetLastPInvokeError(), "Cannot free client-session process enumeration.");
         }
-        return (processes.ToArray(), uncertain);
+        bool uncertain = unknownOwners + unreadable + changed > 0;
+        return (processes.ToArray(), uncertain, uncertain ?
+            $"Client process identities incomplete (unknown owners: {unknownOwners}; unreadable: {unreadable}; changed: {changed}; " +
+            $"operations: {string.Join(", ", failures)}). Camera state is unknown, not inactive." : "");
     }
 }

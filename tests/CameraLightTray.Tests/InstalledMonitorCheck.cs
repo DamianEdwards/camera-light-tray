@@ -27,20 +27,23 @@ internal static class InstalledMonitorCheck
         var complete = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         string detail = "No monitor response.";
         int healthy = 0;
+        bool ownIdentitySeen = false;
         long sequence = -1;
         var monitor = MonitorClient.RunAsync(snapshot =>
         {
             if (snapshot is null) return;
             detail = snapshot.Detail;
-            if (!snapshot.Healthy || !snapshot.Apps.Any(a =>
-                a.Key.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase))) return;
+            ownIdentitySeen = snapshot.Apps.Any(a =>
+                a.Key.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase));
+            if (!snapshot.Healthy || !ownIdentitySeen) return;
             if (snapshot.Sequence <= sequence || DateTimeOffset.UtcNow - snapshot.Time > TimeSpan.FromSeconds(3))
                 complete.TrySetException(new InvalidDataException("Stale/out-of-order helper snapshot."));
             sequence = snapshot.Sequence;
             if (++healthy >= 2) complete.TrySetResult();
         }, message => detail = message, timeout.Token);
         try { await complete.Task.WaitAsync(timeout.Token); }
-        catch (OperationCanceledException) { throw new InvalidOperationException("Healthy standard-user snapshot/current-process identity not established: " + detail); }
+        catch (OperationCanceledException) { throw new InvalidOperationException(
+            $"Healthy standard-user snapshot/current-process identity not established (own identity seen: {ownIdentitySeen}): " + detail); }
         finally { timeout.Cancel(); await monitor; }
         File.WriteAllText(resultPath,
             "PASS: actual setup installed LocalService helper; ETW StartTrace/EnableTraceEx2 healthy; " +

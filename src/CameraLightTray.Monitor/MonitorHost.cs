@@ -120,8 +120,9 @@ internal sealed class MonitorHost : IDisposable
                     ProcessIdentity[] identities = [];
                     bool uncertain = true;
                     string? identityError = null;
+                    string identityDetail = "";
                     long enumerationStarted = DateTimeOffset.UtcNow.ToFileTime();
-                    try { pipe.RunAsClient(() => (identities, uncertain) = ProcessCatalog.Enumerate(sid, session)); }
+                    try { pipe.RunAsClient(() => (identities, uncertain, identityDetail) = ProcessCatalog.Enumerate(sid, session)); }
                     catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or UnauthorizedAccessException)
                     { identityError = "Client identity enumeration failed: " + ex.Message; tracker.Invalidate(identityError); }
                     CaptureEvent[] events;
@@ -153,7 +154,7 @@ internal sealed class MonitorHost : IDisposable
                     var snapshot = new MonitorSnapshot(1, sequence, (currentEpoch << 32) | tracker.Epoch, DateTimeOffset.UtcNow,
                         healthy && tracker.Healthy && !uncertain,
                         !healthy ? detail : identityError ?? (!tracker.Healthy ? tracker.Detail : uncertain ?
-                            "Some client process identities are inaccessible; state is unknown, not inactive." : detail),
+                            identityDetail : detail),
                         tracker.Apps(sid, session));
                     token.CancelAfter(TimeSpan.FromSeconds(5));
                     await writer.WriteLineAsync(JsonSerializer.Serialize(snapshot, AppJson.Default.MonitorSnapshot).AsMemory(), token.Token);
