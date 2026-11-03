@@ -15,12 +15,14 @@ public static class LanInterfaces
             .Select(a => new LanAddress(n.Id, n.Name, a.Address.ToString(), a.IPv4Mask.ToString())))
         .ToArray();
 
-    public static LanAddress Resolve(string interfaceId, IPAddress destination)
+    public static LanAddress Resolve(string interfaceId, IPAddress destination) => SelectSource(Get(), interfaceId, destination);
+
+    public static LanAddress SelectSource(IEnumerable<LanAddress> addresses, string interfaceId, IPAddress destination)
     {
-        var candidates = Get().Where(a => a.InterfaceId == interfaceId && SameSubnet(
-            IPAddress.Parse(a.Address), destination, IPAddress.Parse(a.Mask))).ToArray();
-        return candidates.FirstOrDefault() ?? throw new IOException(
-            "Selected LAN interface is unavailable or the light is outside its subnet. Re-discover or choose an interface; VPN routes are never changed.");
+        var candidates = addresses.Where(a => a.InterfaceId == interfaceId).ToArray();
+        return candidates.FirstOrDefault(a => SameSubnet(IPAddress.Parse(a.Address), destination, IPAddress.Parse(a.Mask))) ??
+            candidates.FirstOrDefault() ?? throw new IOException(
+                "Selected LAN interface is unavailable. Re-discover or choose an interface; VPN routes are never changed.");
     }
 
     public static bool SameSubnet(IPAddress a, IPAddress b, IPAddress mask)

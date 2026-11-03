@@ -22,6 +22,9 @@ audio, or ETL files and sends no telemetry.
   grace defaults to 2500ms.
 - Explicit LAN-interface selection, mDNS `_elg._tcp.local` discovery, read-only
   connection diagnostics and manual IPv4 configuration for port 9123.
+  Discovery joins the standard IPv4 multicast group on UDP 5353 using the
+  selected interface; it does not depend on devices honoring unicast-response
+  requests to an ephemeral port. Results and errors appear beside discovery.
 - Classic HTTP Elgato Key Light / Key Light Air control. Brightness and color
   temperature are preserved. TLS-advertising models are visibly unsupported.
 - Previous-state restoration, persistent crash-recovery intent, external-change
@@ -85,6 +88,13 @@ reported rather than silently treated as success. Provider-specific ETW
 permissions are checked by the actual `StartTrace`/`EnableTraceEx2` calls: if
 LocalService is denied, the UI stays unknown and shows the error. This spike
 does **not** broaden provider ACLs or silently fall back to an elevated UI.
+
+After successful setup, the UI reconnects automatically. A connected-helper
+heartbeat timeout is different from setup failure: it means the helper did not
+send a fresh snapshot within four seconds. State remains unknown while the UI
+retries; repeatedly running setup is not the appropriate response to a slow
+helper. Process-session queries use the direct Windows API rather than
+refreshing the entire system process table once per process.
 
 ### Why a ZIP rather than MSIX for now?
 
@@ -198,8 +208,11 @@ Important limitations and safeguards:
   failed restoration remains available for a later attempt.
 - No VPN settings/routes are changed. Requests disable proxies and redirects
   and source-bind to a dynamically re-resolved address on the selected physical
-  LAN interface. Interface disappearance/subnet mismatch is an explicit error.
-  IPv6 and TLS Elgato transports are not implemented.
+  LAN interface. Routed LAN subnets (including lights advertised through a
+  local mDNS reflector) are supported without requiring the light to share
+  the PC's subnet. No request silently switches to the VPN/default interface.
+  Interface disappearance is an explicit error. IPv6 and TLS Elgato transports
+  are not implemented.
 
 ## Security boundary and local data
 

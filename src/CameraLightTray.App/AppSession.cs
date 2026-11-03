@@ -29,6 +29,7 @@ internal sealed class AppSession
     internal string SensorDetail { get; private set; } = "Monitor not connected; state is unknown.";
     internal string AutomationDetail { get; private set; } = "Automation is off.";
     internal string Notice { get; private set; } = "";
+    internal string DiscoveryDetail { get; private set; } = "";
     internal bool Busy { get; private set; }
     internal ManualMode Mode { get; private set; }
     internal string AppPath { get; set; } = "";
@@ -224,26 +225,48 @@ internal sealed class AppSession
     internal async Task DiscoverAsync()
     {
         if (Demo) throw new InvalidOperationException("Discovery is disabled in synthetic mode.");
-        RefreshInterfaces();
-        var lan = Interfaces.FirstOrDefault(i => i.InterfaceId == Preferences.InterfaceId)
-            ?? throw new InvalidOperationException("Choose a LAN interface first.");
-        var found = await MdnsDiscovery.DiscoverAsync(lan, _stop.Token);
-        var transport = new ElgatoTransport();
-        for (int i = 0; i < found.Length; i++)
-            if (!found[i].Tls) found[i] = found[i] with { Name = await transport.IdentifyAsync(found[i], _stop.Token) };
-        Post(() =>
+        Post(() => { DiscoveryDetail = "Looking for Elgato lights on the selected LAN interface..."; Notify(); });
+        try
         {
-            Change(s =>
+            RefreshInterfaces();
+            var lan = Interfaces.FirstOrDefault(i => i.InterfaceId == Preferences.InterfaceId)
+                ?? throw new InvalidOperationException("Choose a LAN interface first.");
+            var found = await MdnsDiscovery.DiscoverAsync(lan, _stop.Token);
+            var transport = new ElgatoTransport();
+            var failures = new List<string>();
+            for (int i = 0; i < found.Length; i++)
             {
-                foreach (var light in found)
+                if (found[i].Tls) continue;
+                try { found[i] = found[i] with { Name = await transport.IdentifyAsync(found[i], _stop.Token) }; }
+                catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
+                    OperationCanceledException && !_stop.IsCancellationRequested)
                 {
-                    var old = s.Lights.FirstOrDefault(l => l.Id == light.Id);
-                    s.Lights.RemoveAll(l => l.Id == light.Id);
-                    s.Lights.Add(light with { Enabled = old?.Enabled ?? false });
+                    failures.Add($"{found[i].Name}: accessory identification failed ({ex.Message}). Use the read-only connection test.");
                 }
+            }
+            Post(() =>
+            {
+                Change(s =>
+                {
+                    foreach (var light in found)
+                    {
+                        var old = s.Lights.FirstOrDefault(l => l.Id == light.Id);
+                        s.Lights.RemoveAll(l => l.Id == light.Id);
+                        s.Lights.Add(light with { Enabled = old?.Enabled ?? false });
+                    }
+                });
+                DiscoveryDetail = found.Length == 0 ?
+                    "No Elgato lights responded on this interface. Check that they are powered on and on the same LAN; you can also add a known IPv4 address below." :
+                    $"Discovered {found.Length} light(s); new lights are not enabled automatically.";
+                if (failures.Count > 0) DiscoveryDetail += " " + string.Join(" ", failures);
+                Notify();
             });
-            Notice = $"Discovered {found.Length} light(s); new lights are not enabled automatically."; Notify();
-        });
+        }
+        catch (Exception ex)
+        {
+            Post(() => { DiscoveryDetail = "Discovery failed: " + ex.Message; Notify(); });
+            throw;
+        }
     }
     internal async Task AddLightAsync()
     {
@@ -269,8 +292,16 @@ internal sealed class AppSession
         try { Setup.Startup(enabled); Change(s => s.StartAtLogin = enabled); }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException) { Report(ex.Message); }
     }
-    internal Task SetupAsync() => Isolated || Demo ?
-        Task.FromException(new InvalidOperationException("Setup is disabled for isolated/demo runs.")) : Setup.InstallAsync();
+    internal async Task SetupAsync()
+    {
+        if (Isolated || Demo) throw new InvalidOperationException("Setup is disabled for isolated/demo runs.");
+        await Setup.InstallAsync();
+        Post(() =>
+        {
+            Notice = "Monitor setup completed. The UI reconnects automatically; the camera monitor status below reports connection health.";
+            Notify();
+        });
+    }
     internal void Resume() { lock (_gate) _snapshot = null; SensorDetail = "System resumed; waiting for fresh monitor state."; Notify(); }
     internal void DemoCapture(bool active)
     {

@@ -47,7 +47,7 @@ internal sealed class Dashboard(AppSession session) : Component
             Card(VStack(12,
                 TextBlock("Camera monitor").FontSize(20).SemiBold(),
                 Copy(session.SensorDetail).AutomationId("SensorStatus"),
-                Copy("Uses Media Foundation capture-engine lifecycle events, not camera frames. Unknown is never treated as proof the camera is off. Other camera APIs and captures already active at helper startup may remain unknown."),
+                Copy("Uses Media Foundation capture-engine lifecycle events, not camera frames. Unknown is never treated as proof the camera is off. Other camera APIs and captures already active when the UI connects may remain unknown."),
                 Button("Set up / repair monitor (administrator)", () => session.Run(session.SetupAsync))
                     .AutomationId("SetupMonitor").IsEnabled(!session.Busy && !session.Isolated && !session.Demo),
                 Copy("One-time setup copies the helper into protected Program Files and registers a LocalService service. Normal startup and app selection never request elevation."))),
@@ -79,6 +79,8 @@ internal sealed class Dashboard(AppSession session) : Component
                     .AutomationName("LAN interface").AutomationId("LanInterface").IsEnabled(!session.Demo),
                 HStack(8, Button("Refresh interfaces", session.RefreshInterfaces).IsEnabled(!session.Demo),
                     Button("Discover lights", () => session.Run(session.DiscoverAsync)).IsEnabled(!session.Busy && !session.Demo)),
+                !string.IsNullOrEmpty(session.DiscoveryDetail) ?
+                    Copy(session.DiscoveryDetail).AutomationId("DiscoveryStatus") : null,
                 VStack(10, preferences.Lights.Select(light => (Element)VStack(4,
                     CheckBox(light.Enabled, value => session.SelectLight(light, value == true), light.Name)
                         .IsEnabled(!light.Tls).AutomationName("Automate " + light.Name),

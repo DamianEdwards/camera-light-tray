@@ -178,7 +178,7 @@ Test("settings and IPC use source-generated JSON", () =>
     Equal("{\"numberOfLights\":1,\"lights\":[{\"on\":1,\"brightness\":40,\"temperature\":250}]}",
         JsonSerializer.Serialize(new LightRequest(1, [new(1, 40, 250)]), AppJson.Default.LightRequest));
 });
-Test("LAN subnet binding, validation and unsupported endpoints", () =>
+Test("explicit LAN source binding, routed subnets, validation and unsupported endpoints", () =>
 {
     Equal(true, LanInterfaces.SameSubnet(System.Net.IPAddress.Parse("192.0.2.1"),
         System.Net.IPAddress.Parse("192.0.2.2"), System.Net.IPAddress.Parse("255.255.255.0")));
@@ -187,11 +187,19 @@ Test("LAN subnet binding, validation and unsupported endpoints", () =>
     Throws(() => LightEndpoint.Validate(new("l", "Light", "127.0.0.1", 9123, "lan")));
     Throws(() => LightEndpoint.Validate(new("l", "Light", "example.invalid", 9123, "lan")));
     Throws(() => new Settings { ActivationMilliseconds = 99 }.Validate());
+    LanAddress[] addresses = [new("vpn", "VPN", "192.0.2.1", "255.255.255.0"),
+        new("lan", "LAN", "198.51.100.1", "255.255.255.0"),
+        new("lan", "LAN alias", "203.0.113.1", "255.255.255.0")];
+    Equal("198.51.100.1", LanInterfaces.SelectSource(addresses, "lan", System.Net.IPAddress.Parse("192.0.2.20")).Address);
+    Equal("203.0.113.1", LanInterfaces.SelectSource(addresses, "lan", System.Net.IPAddress.Parse("203.0.113.20")).Address);
+    try { LanInterfaces.SelectSource(addresses, "missing", System.Net.IPAddress.Parse("192.0.2.20")); throw new Exception("Unavailable interface must fail."); }
+    catch (IOException) { }
 });
 Test("mDNS query, compressed PTR/SRV/A and TLS TXT", () =>
 {
     byte[] query = MdnsPacket.Query("_elg._tcp.local", 12);
     Equal(1, (int)query[5]); Equal(0, MdnsPacket.Read(query).Length);
+    Equal((ushort)1, BinaryPrimitives.ReadUInt16BigEndian(query.AsSpan(query.Length - 2)));
     using var stream = new MemoryStream();
     void Word(ushort value) { Span<byte> bytes = stackalloc byte[2]; BinaryPrimitives.WriteUInt16BigEndian(bytes, value); stream.Write(bytes); }
     void Name(string value)
@@ -222,6 +230,9 @@ Test("mDNS query, compressed PTR/SRV/A and TLS TXT", () =>
     Equal(true, MdnsPacket.UsesTls(records[3].Data));
     Equal(true, MdnsPacket.UsesTls(new byte[] { 5, (byte)'t', (byte)'l', (byte)'s', (byte)'=', (byte)'1' }));
     Equal(false, MdnsPacket.UsesTls(new byte[] { 5, (byte)'t', (byte)'l', (byte)'s', (byte)'=', (byte)'0' }));
+    var discovered = MdnsDiscovery.ResolveRecords(records, "routed-lan");
+    Equal(1, discovered.Length); Equal("192.0.2.20", discovered[0].Host);
+    Equal("routed-lan", discovered[0].InterfaceId); Equal(true, discovered[0].Tls);
 });
 Test("malformed mDNS packets and cyclic compression fail explicitly", () =>
 {
@@ -302,8 +313,13 @@ if (OperatingSystem.IsWindows())
 {
     using var identity = WindowsIdentity.GetCurrent();
     using var ownProcess = System.Diagnostics.Process.GetCurrentProcess();
+    var catalogClock = System.Diagnostics.Stopwatch.StartNew();
     var ownCatalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate(identity.User!.Value, ownProcess.SessionId);
     Equal(true, ownCatalog.Processes.Any(p => p.Pid == ownProcess.Id && p.UserSid == identity.User.Value));
+    Equal(ownProcess.SessionId, ownCatalog.Processes.Single(p => p.Pid == ownProcess.Id).SessionId);
+    if (catalogClock.Elapsed >= TimeSpan.FromSeconds(4))
+        throw new InvalidOperationException($"Process catalog exceeded the 4-second heartbeat deadline: {catalogClock.ElapsedMilliseconds}ms.");
+    passed++; Console.WriteLine($"PASS process catalog stays within heartbeat deadline ({catalogClock.ElapsedMilliseconds}ms)");
     var otherCatalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate("S-1-0-0", ownProcess.SessionId);
     Equal(0, otherCatalog.Processes.Length);
     passed++; Console.WriteLine("PASS WTS process owner enumeration and SID/session-filtered executable identities");
@@ -331,6 +347,25 @@ if (OperatingSystem.IsWindows())
     });
     Equal(identity.User!.Value, sid);
     passed++; Console.WriteLine("PASS explicit read/write pipe rights, Windows client impersonation and spoofed-server rejection");
+    using var reader = new StreamReader(client, Encoding.UTF8, leaveOpen: true);
+    try
+    {
+        await MonitorClient.ReadHeartbeatAsync(reader, CancellationToken.None);
+        throw new InvalidOperationException("Stalled helper must time out.");
+    }
+    catch (TimeoutException ex)
+    {
+        Equal(true, ex.Message.Contains("connected") && ex.Message.Contains("does not mean setup failed"));
+    }
+    using var cancelled = new CancellationTokenSource();
+    cancelled.Cancel();
+    try
+    {
+        await MonitorClient.ReadHeartbeatAsync(reader, cancelled.Token);
+        throw new InvalidOperationException("Shutdown must remain cancellation, not a helper timeout.");
+    }
+    catch (OperationCanceledException) { }
+    passed++; Console.WriteLine("PASS stalled helper reports heartbeat timeout separately from setup failure and shutdown");
 }
 Console.WriteLine($"{passed} tests passed.");
 

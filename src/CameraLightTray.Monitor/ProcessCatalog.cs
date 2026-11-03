@@ -19,6 +19,8 @@ internal static unsafe partial class ProcessCatalog
     [LibraryImport("kernel32.dll", SetLastError = true)]
     private static partial int GetProcessTimes(SafeProcessHandle process, out long creation, out long exit,
         out long kernel, out long user);
+    [LibraryImport("kernel32.dll", SetLastError = true)]
+    private static partial int ProcessIdToSessionId(uint processId, out uint sessionId);
     [LibraryImport("kernel32.dll", EntryPoint = "GetPackageFamilyName", SetLastError = false)]
     private static partial int GetPackageFamilyName(SafeProcessHandle process, ref uint length, char* name);
     [LibraryImport("wtsapi32.dll", EntryPoint = "WTSEnumerateProcessesExW", SetLastError = true)]
@@ -42,8 +44,8 @@ internal static unsafe partial class ProcessCatalog
         using var handle = OpenProcess(0x1000, 0, (uint)pid);
         if (handle.IsInvalid) { failure = "OpenProcess:" + Marshal.GetLastPInvokeError(); return null; }
         var buffer = new char[32768]; uint size = (uint)buffer.Length;
-        fixed (char* name = buffer)
-            if (QueryFullProcessImageName(handle, 0, name, ref size) == 0)
+        fixed (char* image = buffer)
+            if (QueryFullProcessImageName(handle, 0, image, ref size) == 0)
             { failure = "QueryFullProcessImageName:" + Marshal.GetLastPInvokeError(); return null; }
         if (GetProcessTimes(handle, out long start, out _, out _, out _) == 0)
         { failure = "GetProcessTimes:" + Marshal.GetLastPInvokeError(); return null; }
@@ -56,19 +58,19 @@ internal static unsafe partial class ProcessCatalog
                 verifiedSid = identity.User?.Value;
             if (verifiedSid is null) return null;
         }
-        using (var process = Process.GetProcessById(pid))
-        {
-            string path = new(buffer, 0, (int)size);
-            uint packageLength = 256;
-            char* package = stackalloc char[(int)packageLength];
-            string key = GetPackageFamilyName(handle, ref packageLength, package) == 0 ?
-                "package:" + new string(package) + "|" + Path.GetFileName(path) : path;
-            string name = Path.GetFileNameWithoutExtension(path);
-            try { name = FileVersionInfo.GetVersionInfo(path).FileDescription is { Length: > 0 } friendly ? friendly : name; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-            return new(pid, start, process.SessionId, verifiedSid,
-                key, name);
-        }
+        // Process.SessionId refreshes the system-wide process table on Windows.
+        // Doing that for every WTS entry makes each heartbeat quadratic.
+        if (ProcessIdToSessionId((uint)pid, out uint session) == 0)
+        { failure = "ProcessIdToSessionId:" + Marshal.GetLastPInvokeError(); return null; }
+        string path = new(buffer, 0, (int)size);
+        uint packageLength = 256;
+        char* package = stackalloc char[(int)packageLength];
+        string key = GetPackageFamilyName(handle, ref packageLength, package) == 0 ?
+            "package:" + new string(package) + "|" + Path.GetFileName(path) : path;
+        string name = Path.GetFileNameWithoutExtension(path);
+        try { name = FileVersionInfo.GetVersionInfo(path).FileDescription is { Length: > 0 } friendly ? friendly : name; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return new(pid, start, checked((int)session), verifiedSid, key, name);
     }
 
     // Called only inside the authenticated client's impersonation scope. WTS supplies

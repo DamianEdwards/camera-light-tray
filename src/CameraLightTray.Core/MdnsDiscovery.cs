@@ -22,7 +22,7 @@ public static class MdnsPacket
         data.WriteByte(0);
         Span<byte> tail = stackalloc byte[4];
         BinaryPrimitives.WriteUInt16BigEndian(tail, type);
-        BinaryPrimitives.WriteUInt16BigEndian(tail[2..], 0x8001); // unicast response to this ephemeral socket
+        BinaryPrimitives.WriteUInt16BigEndian(tail[2..], 1); // IN, normal multicast response
         data.Write(tail);
         byte[] result = data.ToArray(); result[5] = 1;
         return result;
@@ -108,8 +108,13 @@ public static class MdnsDiscovery
     public static async Task<LightDevice[]> DiscoverAsync(LanAddress lan, CancellationToken cancellationToken)
     {
         var local = IPAddress.Parse(lan.Address);
-        using var socket = new UdpClient(new IPEndPoint(local, 0));
+        using var socket = new UdpClient(AddressFamily.InterNetwork);
+        socket.Client.ExclusiveAddressUse = false;
+        socket.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        socket.Client.Bind(new IPEndPoint(IPAddress.Any, 5353));
         socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, local.GetAddressBytes());
+        socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 255);
+        socket.JoinMulticastGroup(IPAddress.Parse("224.0.0.251"), local);
         var destination = new IPEndPoint(IPAddress.Parse("224.0.0.251"), 5353);
         await socket.SendAsync(MdnsPacket.Query(Service, 12), destination, cancellationToken);
         var records = new List<DnsRecord>();
@@ -122,6 +127,8 @@ public static class MdnsDiscovery
             {
                 var packet = await socket.ReceiveAsync(timeout.Token);
                 if (!LanInterfaces.SameSubnet(local, packet.RemoteEndPoint.Address, IPAddress.Parse(lan.Mask))) continue;
+                if (packet.RemoteEndPoint.Port != 5353 || packet.Buffer.Length < 12 ||
+                    (packet.Buffer[2] & 0x80) == 0) continue;
                 records.AddRange(MdnsPacket.Read(packet.Buffer));
                 foreach (var target in records.Where(r => r.Type is 12 or 33 && r.Target is not null)
                     .Select(r => (r.Target!, Type: (ushort)(r.Type == 12 ? 255 : 1))).ToArray())
@@ -130,6 +137,12 @@ public static class MdnsDiscovery
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
+        return ResolveRecords(records, lan.InterfaceId);
+    }
+
+    public static LightDevice[] ResolveRecords(IEnumerable<DnsRecord> answers, string interfaceId)
+    {
+        var records = answers.ToArray();
         var devices = new List<LightDevice>();
         foreach (var ptr in records.Where(r => r.Type == 12 && r.Name == Service && r.Target is not null))
         {
@@ -138,9 +151,9 @@ public static class MdnsDiscovery
             if (srv is null || a is null) continue;
             bool tls = records.Where(r => r.Type == 16 && r.Name == ptr.Target).Any(r => MdnsPacket.UsesTls(r.Data));
             var device = new LightDevice(ptr.Target!, ptr.Target!.Replace("." + Service, "", StringComparison.Ordinal),
-                new IPAddress(a.Data).ToString(), srv.Port, lan.InterfaceId, Tls: tls);
+                new IPAddress(a.Data).ToString(), srv.Port, interfaceId, Tls: tls);
             LightEndpoint.Validate(device);
-            if (LanInterfaces.SameSubnet(local, IPAddress.Parse(device.Host), IPAddress.Parse(lan.Mask))) devices.Add(device);
+            devices.Add(device);
         }
         return devices.DistinctBy(d => d.Id).ToArray();
     }

@@ -15,6 +15,17 @@ internal static class MonitorClient
     internal static NamedPipeClientStream Create(string name = "CameraLightTray.Monitor.v1") =>
         new(".", name, PipeAccessRights.ReadWrite, PipeOptions.Asynchronous,
             TokenImpersonationLevel.Impersonation, HandleInheritability.None);
+    internal static async Task<string?> ReadHeartbeatAsync(StreamReader reader, CancellationToken token)
+    {
+        using var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(token);
+        heartbeat.CancelAfter(TimeSpan.FromSeconds(4));
+        try { return await reader.ReadLineAsync(heartbeat.Token); }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            throw new TimeoutException("The monitor connected but did not send a snapshot within 4 seconds. " +
+                "The helper may be slow or unresponsive; this does not mean setup failed.");
+        }
+    }
     internal static async Task RunAsync(Action<MonitorSnapshot?> update, Action<string> status, CancellationToken token)
     {
         while (!token.IsCancellationRequested)
@@ -29,9 +40,7 @@ internal static class MonitorClient
                 long sequence = -1;
                 while (true)
                 {
-                    using var heartbeat = CancellationTokenSource.CreateLinkedTokenSource(token);
-                    heartbeat.CancelAfter(TimeSpan.FromSeconds(4));
-                    string? line = await reader.ReadLineAsync(heartbeat.Token);
+                    string? line = await ReadHeartbeatAsync(reader, token);
                     if (line is null) throw new IOException("Monitor disconnected.");
                     if (line.Length > 1_000_000) throw new InvalidDataException("Monitor response exceeds limit.");
                     var snapshot = JsonSerializer.Deserialize(line, AppJson.Default.MonitorSnapshot)
@@ -48,7 +57,9 @@ internal static class MonitorClient
             {
                 update(null);
                 if (token.IsCancellationRequested) return;
-                status("Monitor unavailable: " + ex.Message + " Explicit setup/repair may be required. Camera state is unknown.");
+                status("Monitor unavailable: " + ex.Message +
+                    (ex is TimeoutException ? " Reconnecting; camera state is unknown." :
+                        " Check that the monitor service is installed and running. Camera state is unknown."));
             }
             try { await Task.Delay(2000, token); }
             catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
