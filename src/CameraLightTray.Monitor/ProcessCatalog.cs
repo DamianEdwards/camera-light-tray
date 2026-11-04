@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 using System.Runtime.Versioning;
@@ -68,8 +67,6 @@ internal static unsafe partial class ProcessCatalog
         string key = GetPackageFamilyName(handle, ref packageLength, package) == 0 ?
             "package:" + new string(package) + "|" + Path.GetFileName(path) : path;
         string name = Path.GetFileNameWithoutExtension(path);
-        try { name = FileVersionInfo.GetVersionInfo(path).FileDescription is { Length: > 0 } friendly ? friendly : name; }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return new(pid, start, checked((int)session), verifiedSid, key, name);
     }
 

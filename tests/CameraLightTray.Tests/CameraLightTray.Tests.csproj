@@ -8,6 +8,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CameraLightTray.Core\CameraLightTray.Core.csproj" />
     <Compile Include="..\..\src\CameraLightTray.App\Platform\MonitorClient.cs" Link="MonitorClient.cs" />
+    <Compile Include="..\..\src\CameraLightTray.App\Platform\SensorMonitorRecovery.cs" Link="SensorMonitorRecovery.cs" />
+    <Compile Include="..\..\src\CameraLightTray.App\Platform\SensorActivityMonitor.cs" Link="SensorActivityMonitor.cs" />
     <Compile Include="..\..\src\CameraLightTray.Monitor\ProcessCatalog.cs" Link="ProcessCatalog.cs" />
   </ItemGroup>
 </Project>

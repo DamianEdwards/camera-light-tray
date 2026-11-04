@@ -24,6 +24,15 @@ records images, audio or video. The app sends no telemetry.
   active Windows Camera session. Select all cameras or a subset. Activity
   aggregates across selected apps and cameras; activation debounce defaults
   to 500ms and leave grace to 2500ms.
+- Temporary sensor or process-owner query failures are shown as unknown and
+  retried automatically after two seconds, rather than stopping monitoring.
+  Recovery requires fresh process identities and camera reports; callbacks
+  from the previous observation are ignored. Native query errors include
+  their Windows error code for diagnostics.
+- Empty or partial notifications are not a camera-off signal. Each monitored
+  camera needs its own reported baseline; updates for another camera do not
+  erase existing activity. Observations are renewed every minute to recover
+  a silently stalled subscription. Unknown continues to hold owned lights.
 - Separate Overview, Apps, Cameras, Lights, and Rules pages. App suggestions
   prioritize saved selections, active clients, installed packages declaring
   webcam capability, and known communications apps such as Teams and Signal.
@@ -39,8 +48,21 @@ records images, audio or video. The app sends no telemetry.
   requests to an ephemeral port. Results and errors appear beside discovery.
 - Classic HTTP Elgato Key Light / Key Light Air control. Brightness and color
   temperature are preserved. TLS-advertising models are visibly unsupported.
+- Light requests run independently with bounded concurrency and timeouts.
+  Healthy states are checked at most once per second; failures back off
+  from two to thirty seconds. Release or endpoint changes bypass the previous
+  retry delay. Separate readbacks keep one offline device from hiding another.
+  Failed reachability triggers read-only rediscovery at most every thirty
+  seconds on the explicitly selected interface. Stable discovered identities
+  update DHCP endpoints without losing original-state ownership.
+- Camera monitoring, optional app details/icons, reachability checks and
+  lighting control have separate workers. A stalled shell thumbnail or one
+  malformed light response cannot permanently stop automation. Ownership
+  writes remain serialized and journaled before physical changes.
 - Previous-state restoration, persistent crash-recovery intent, external-change
   ownership relinquishment, pause, manual-on and manual-off/release.
+  Disabling automation or removing every app selection releases owned changes
+  even while the sensor is unavailable.
 - An optional experimental fixed-function LocalService ETW helper and local
   authenticated IPC remain available for diagnostics and installed-service CI.
   **The UI uses normal-user sensor reports, not this legacy helper.**
@@ -78,6 +100,13 @@ app's activation/release while the preview stays live. Desktop app identities
 include their full path, so moving a portable build requires reselecting it.
 Camera access must be allowed in Windows privacy settings. A failed or
 unavailable camera reports an explicit preview error; it never starts recording.
+
+If monitoring or networking fails temporarily, leave the app running: the
+status explains the failure and recovery is automatic. No reinstall, helper
+repair or elevation is required. A missing/unreported camera remains unknown;
+select supported trigger cameras explicitly if another virtual or unavailable
+camera cannot provide an activity baseline. Manually entered IP addresses
+are fixed endpoints; use mDNS discovery for automatic DHCP endpoint updates.
 
 Closing the window hides it; right-click the tray icon to pause/resume or exit.
 **Start at login** writes only the current user's Run registration. Normal
@@ -122,6 +151,8 @@ snapshots; a service setup success is not proof of ETW/IPC health. The legacy
 pipe client distinguishes a four-second heartbeat timeout from setup failure.
 Process-session queries use the direct Windows API rather than refreshing the
 entire system process table once per process.
+Executable version resources and shell thumbnails are resolved in an optional
+UI worker, never in the process-identity heartbeat.
 
 ### Why a ZIP rather than MSIX for now?
 
@@ -156,9 +187,23 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.3
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.3\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.4
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.4\CameraLightTray.exe
 ```
+
+On a Windows 11 desktop, the native test executable also supports a real,
+normal-user metadata-only recovery check:
+
+```powershell
+.\artifacts\native-tests\CameraLightTray.Tests.exe --sensor-recovery-check .\artifacts\sensor-recovery-result.txt
+Get-Content .\artifacts\sensor-recovery-result.txt
+```
+
+It injects a transient process-owner lookup error after native monitor start,
+then requires automatic disposal/recreation and two fresh healthy sensor and
+own-process identity snapshots. It does not open a camera, change a light,
+install a helper, or request elevation. Windows Server is not a supported
+platform for the sensor API, so this check is separate from hosted service CI.
 
 `--isolated` requires a separate data directory, disables setup and login
 registration, and starts automation off even if that directory previously
@@ -186,7 +231,8 @@ The active UI source is
 [`MFCreateSensorActivityMonitor`](https://learn.microsoft.com/windows/win32/api/mfidl/nf-mfidl-mfcreatesensoractivitymonitor)
 and `IMFSensorActivitiesReportCallback`. Windows supplies current sensor reports,
 device symbolic links, streaming flags, client PIDs and report times. Each
-successful report replaces the previous inventory; it is not reconstructed
+successful per-camera report replaces that camera's previous state; a partial
+notification does not clear other cameras. State is not reconstructed
 from guessed start/stop events or stale registry values. Process identities
 are scoped to the current Windows user/session and checked against creation
 time to reject PID reuse. Already-streaming clients can be identified at

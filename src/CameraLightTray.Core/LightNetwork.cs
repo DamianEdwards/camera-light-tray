@@ -18,7 +18,11 @@ public static class LanInterfaces
             .Select(a => new LanAddress(n.Id, n.Name, a.Address.ToString(), a.IPv4Mask.ToString())))
         .ToArray();
 
-    public static LanAddress Resolve(string interfaceId, IPAddress destination) => SelectSource(Get(), interfaceId, destination);
+    public static LanAddress Resolve(string interfaceId, IPAddress destination)
+    {
+        try { return SelectSource(Get(), interfaceId, destination); }
+        catch (NetworkInformationException ex) { throw new IOException("Cannot inspect the selected LAN interface.", ex); }
+    }
 
     public static LanAddress SelectSource(IEnumerable<LanAddress> addresses, string interfaceId, IPAddress destination)
     {
@@ -50,6 +54,9 @@ public static class LightEndpoint
 
 public sealed class ElgatoTransport : ILightTransport
 {
+    private readonly Func<LightDevice, HttpClient> _clients;
+    public ElgatoTransport() => _clients = CreateClient;
+    internal ElgatoTransport(Func<LightDevice, HttpClient> clients) => _clients = clients;
     private static HttpClient CreateClient(LightDevice device)
     {
         LightEndpoint.Validate(device);
@@ -76,9 +83,14 @@ public sealed class ElgatoTransport : ILightTransport
     }
     public async Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(device);
-        var response = await client.GetFromJsonAsync("/elgato/lights", AppJson.Default.LightResponse, cancellationToken)
-            ?? throw new InvalidDataException("Empty light response.");
+        using var client = _clients(device);
+        LightResponse response;
+        try
+        {
+            response = await client.GetFromJsonAsync("/elgato/lights", AppJson.Default.LightResponse, cancellationToken)
+                ?? throw new InvalidDataException("Empty light response.");
+        }
+        catch (JsonException ex) { throw new InvalidDataException("Malformed Elgato light-state response.", ex); }
         if (response.NumberOfLights != 1 || response.Lights is not { Length: 1 } ||
             response.Lights[0] is not { On: 0 or 1, Brightness: >= 0 and <= 100, Temperature: >= 100 and <= 500 })
             throw new InvalidDataException("Unsupported Elgato light-state response.");
@@ -86,7 +98,7 @@ public sealed class ElgatoTransport : ILightTransport
     }
     public async Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(device);
+        using var client = _clients(device);
         using var content = CreateWriteContent(state);
         using var response = await client.PutAsync("/elgato/lights", content, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -100,9 +112,14 @@ public sealed class ElgatoTransport : ILightTransport
     }
     public async Task<string> IdentifyAsync(LightDevice device, CancellationToken cancellationToken)
     {
-        using var client = CreateClient(device);
-        var info = await client.GetFromJsonAsync("/elgato/accessory-info", AppJson.Default.AccessoryInfo, cancellationToken)
-            ?? throw new InvalidDataException("Empty accessory response.");
+        using var client = _clients(device);
+        AccessoryInfo info;
+        try
+        {
+            info = await client.GetFromJsonAsync("/elgato/accessory-info", AppJson.Default.AccessoryInfo, cancellationToken)
+                ?? throw new InvalidDataException("Empty accessory response.");
+        }
+        catch (JsonException ex) { throw new InvalidDataException("Malformed Elgato accessory response.", ex); }
         return info.DisplayName ?? info.ProductName ?? device.Name;
     }
 }

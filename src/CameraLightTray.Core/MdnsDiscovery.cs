@@ -129,7 +129,12 @@ public static class MdnsDiscovery
                 if (!LanInterfaces.SameSubnet(local, packet.RemoteEndPoint.Address, IPAddress.Parse(lan.Mask))) continue;
                 if (packet.RemoteEndPoint.Port != 5353 || packet.Buffer.Length < 12 ||
                     (packet.Buffer[2] & 0x80) == 0) continue;
-                records.AddRange(MdnsPacket.Read(packet.Buffer));
+                try { records.AddRange(MdnsPacket.Read(packet.Buffer)); }
+                catch (InvalidDataException ex)
+                {
+                    System.Diagnostics.Trace.WriteLine("Ignoring malformed mDNS response: " + ex.Message);
+                    continue;
+                }
                 foreach (var target in records.Where(r => r.Type is 12 or 33 && r.Target is not null)
                     .Select(r => (r.Target!, Type: (ushort)(r.Type == 12 ? 255 : 1))).ToArray())
                     if (queried.Add(target.Item1))
@@ -152,7 +157,12 @@ public static class MdnsDiscovery
             bool tls = records.Where(r => r.Type == 16 && r.Name == ptr.Target).Any(r => MdnsPacket.UsesTls(r.Data));
             var device = new LightDevice(ptr.Target!, ptr.Target!.Replace("." + Service, "", StringComparison.Ordinal),
                 new IPAddress(a.Data).ToString(), srv.Port, interfaceId, Tls: tls);
-            LightEndpoint.Validate(device);
+            try { LightEndpoint.Validate(device); }
+            catch (InvalidDataException ex)
+            {
+                System.Diagnostics.Trace.WriteLine("Ignoring invalid Elgato discovery endpoint: " + ex.Message);
+                continue;
+            }
             devices.Add(device);
         }
         return devices.DistinctBy(d => d.Id).ToArray();

@@ -25,6 +25,11 @@ public sealed class AutomationDecision
             _activeSince = _inactiveSince = null;
             return Desired = mode == ManualMode.ForceOn;
         }
+        if (!settings.Apps.Any(a => a.Enabled))
+        {
+            _activeSince = _inactiveSince = null;
+            return Desired = false;
+        }
         if (snapshot is null || now - snapshot.Time > TimeSpan.FromSeconds(4) ||
             snapshot.Time > now + TimeSpan.FromSeconds(1))
         {
@@ -61,87 +66,141 @@ public sealed class AutomationDecision
     }
 }
 
-public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJournal> persist)
+public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJournal> persist, TimeProvider? clock = null)
 {
+    private readonly object _gate = new();
+    private readonly SemaphoreSlim _reconcile = new(1, 1);
     private readonly Dictionary<string, OwnedLight> _owned = [];
     private readonly HashSet<string> _suppressed = [];
-    public IReadOnlyCollection<OwnedLight> Owned => _owned.Values;
+    private readonly Dictionary<string, Attempt> _attempts = [];
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+    private bool _dirty;
+    private sealed record Attempt(LightDevice Device, bool Desired, int Failures, DateTimeOffset Next, string Error);
+    public IReadOnlyCollection<OwnedLight> Owned { get { lock (_gate) return _owned.Values.ToArray(); } }
     public string Status { get; private set; } = "Automation is off.";
     public void Recover(OwnershipJournal journal)
     {
-        foreach (var item in journal.Lights) _owned.TryAdd(item.Device.Id, item);
+        lock (_gate) foreach (var item in journal.Lights) _owned.TryAdd(item.Device.Id, item);
     }
-    private void Save() => persist(new(_owned.Values.ToList()));
+    private void Save()
+    {
+        try { persist(new(_owned.Values.ToList())); _dirty = false; }
+        catch { _dirty = true; throw; }
+    }
+    private void Store(OwnedLight item)
+    {
+        lock (_gate) { _owned[item.Device.Id] = item; Save(); }
+    }
+    private void Release(string id, bool suppress)
+    {
+        lock (_gate)
+        {
+            _owned.Remove(id);
+            if (suppress) _suppressed.Add(id);
+            Save();
+        }
+    }
 
     public async Task ReconcileAsync(bool desired, IEnumerable<LightDevice> devices, CancellationToken token)
     {
-        var failures = new List<Exception>();
-        var enabled = devices.Where(d => d.Enabled && !d.Tls).ToDictionary(d => d.Id);
-        foreach (var item in _owned.Values.ToArray())
+        await _reconcile.WaitAsync(token);
+        try { await ReconcileDevicesAsync(desired, devices, token); }
+        finally { _reconcile.Release(); }
+    }
+
+    private async Task ReconcileDevicesAsync(bool desired, IEnumerable<LightDevice> devices, CancellationToken token)
+    {
+        var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
+        var configured = devices.ToDictionary(d => d.Id);
+        string[] ids;
+        lock (_gate)
         {
+            if (_dirty) Save();
+            if (!desired) _suppressed.Clear();
+            ids = _owned.Keys.Union(configured.Values.Where(d => desired && d.Enabled && !d.Tls).Select(d => d.Id)).ToArray();
+            foreach (string id in _attempts.Keys.Except(ids).ToArray()) _attempts.Remove(id);
+        }
+        await Parallel.ForEachAsync(ids, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = token }, async (id, cancellation) =>
+        {
+            OwnedLight? item;
+            Attempt? previous;
+            LightDevice device;
+            lock (_gate)
+            {
+                _owned.TryGetValue(id, out item);
+                device = configured.GetValueOrDefault(id) ?? item!.Device;
+                if (_suppressed.Contains(id)) return;
+                _attempts.TryGetValue(id, out previous);
+                if (previous is not null && (previous.Device != device || previous.Desired != desired)) previous = null;
+                if (previous is not null && previous.Device == device && previous.Desired == desired && previous.Next > _clock.GetUtcNow())
+                {
+                    if (previous.Failures > 0) failures.Enqueue(new IOException($"{device.Name}: {previous.Error} Retrying automatically."));
+                    return;
+                }
+            }
             try
             {
-                var current = await transport.ReadAsync(item.Device, token);
-                if (!item.AppliedConfirmed && current == item.Before)
+                if (item is not null)
                 {
-                    if (desired && enabled.ContainsKey(item.Device.Id))
+                    if (item.Device != device) { item = item with { Device = device }; Store(item); }
+                    var current = await transport.ReadAsync(device, cancellation);
+                    if (!item.AppliedConfirmed && current == item.Applied)
                     {
-                        await transport.WriteAsync(item.Device, item.Applied, token);
-                        _owned[item.Device.Id] = item with { AppliedConfirmed = true };
-                        Save();
-                        Status = "Camera activity: lights on (owned changes only).";
+                        item = item with { AppliedConfirmed = true };
+                        Store(item);
                     }
-                    else
+                    if (!item.AppliedConfirmed && current == item.Before)
                     {
-                        _owned.Remove(item.Device.Id);
-                        Save();
-                        Status = "Previous light state unchanged; pending activation released.";
+                        if (desired && device.Enabled && !device.Tls)
+                        {
+                            Store(item);
+                            await transport.WriteAsync(device, item.Applied, cancellation);
+                            Store(item with { AppliedConfirmed = true });
+                            Status = "Camera activity: lights on (owned changes only).";
+                        }
+                        else
+                        {
+                            Release(id, false);
+                            Status = "Previous light state unchanged; pending activation released.";
+                        }
+                    }
+                    else if (current != item.Applied)
+                    {
+                        Release(id, desired);
+                        Status = "External light change detected; leaving it alone until this activation ends.";
+                    }
+                    else if (!desired || !device.Enabled || device.Tls || !configured.ContainsKey(id))
+                    {
+                        Store(item);
+                        await transport.WriteAsync(device, item.Before, cancellation);
+                        Release(id, false);
+                        Status = "Previous light state restored.";
                     }
                 }
-                else if (current != item.Applied)
+                else
                 {
-                    _owned.Remove(item.Device.Id);
-                    _suppressed.Add(item.Device.Id);
-                    Save();
-                    Status = "External light change detected; leaving it alone until this activation ends.";
+                    var before = await transport.ReadAsync(device, cancellation);
+                    var applied = before with { On = 1 };
+                    if (before != applied)
+                    {
+                        item = new(device, before, applied, AppliedConfirmed: false);
+                        Store(item);
+                        await transport.WriteAsync(device, applied, cancellation);
+                        Store(item with { AppliedConfirmed = true });
+                    }
+                    Status = "Camera activity: lights on (owned changes only).";
                 }
-                else if (!desired || !enabled.ContainsKey(item.Device.Id))
-                {
-                    await transport.WriteAsync(item.Device, item.Before, token);
-                    _owned.Remove(item.Device.Id);
-                    Save();
-                    Status = "Previous light state restored.";
-                }
+                lock (_gate) _attempts[id] = new(device, desired, 0, _clock.GetUtcNow().AddSeconds(1), "");
             }
             catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
-                OperationCanceledException && !token.IsCancellationRequested)
+                NotSupportedException or OperationCanceledException && !cancellation.IsCancellationRequested)
             {
-                failures.Add(new IOException($"{item.Device.Name}: {ex.Message}", ex));
+                int count = Math.Min((previous?.Failures ?? 0) + 1, 5);
+                lock (_gate) _attempts[id] = new(device, desired, count,
+                    _clock.GetUtcNow().AddSeconds(Math.Min(30, 1 << count)), ex.Message);
+                failures.Enqueue(new IOException($"{device.Name}: {ex.Message} Retrying automatically.", ex));
             }
-        }
-        if (!desired) _suppressed.Clear();
-        else foreach (var device in enabled.Values)
-        {
-            if (_owned.ContainsKey(device.Id) || _suppressed.Contains(device.Id)) continue;
-            try
-            {
-                var before = await transport.ReadAsync(device, token);
-                var applied = before with { On = 1 };
-                if (before == applied) continue;
-                // Persist intent before the write, so a crash cannot lose the restoration record.
-                _owned.Add(device.Id, new(device, before, applied, AppliedConfirmed: false));
-                Save();
-                await transport.WriteAsync(device, applied, token);
-                _owned[device.Id] = _owned[device.Id] with { AppliedConfirmed = true };
-                Save();
-                Status = "Camera activity: lights on (owned changes only).";
-            }
-            catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
-                OperationCanceledException && !token.IsCancellationRequested)
-            {
-                failures.Add(new IOException($"{device.Name}: {ex.Message}", ex));
-            }
-        }
+        });
         if (failures.Count > 0) throw new IOException(
             $"{failures.Count} light operation(s) failed. {string.Join(" ", failures.Select(e => e.Message))}",
             new AggregateException(failures));

@@ -8,6 +8,29 @@ using CameraLightTray.App.Platform;
 using CameraLightTray.Tests;
 using CameraLightTray.Core;
 
+if (args is ["--sensor-recovery-check", var sensorResultPath])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+    try { await SensorMonitorCheck.RunAsync(sensorResultPath); }
+    catch (Exception ex) { File.WriteAllText(sensorResultPath, "FAIL: " + ex.Message); Environment.ExitCode = 1; }
+    return;
+}
+if (args is ["--sensor-observe"])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+    int reports = 0, failures = 0;
+    using var monitor = new SensorActivityMonitor(activities =>
+    {
+        Interlocked.Increment(ref reports);
+        Console.WriteLine($"{DateTimeOffset.UtcNow:O} cameras={activities.Length}; clients={activities.Sum(a => a.Processes.Length)}; " +
+            $"streaming={activities.Sum(a => a.Processes.Count(p => p.Streaming))}; " +
+            $"per-camera={string.Join(",", activities.Select(a => a.Processes.Count(p => p.Streaming)))}");
+    }, error => { Interlocked.Increment(ref failures); Console.Error.WriteLine(error); });
+    monitor.Start();
+    await Task.Delay(TimeSpan.FromSeconds(20));
+    if (reports == 0 || failures != 0) Environment.ExitCode = 1;
+    return;
+}
 if (args is ["--monitor-integration", var resultPath])
 {
     if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
@@ -110,7 +133,7 @@ var sensorProcess = process with { StartTime = now.AddMinutes(-1).ToFileTime() }
 SensorActivity Activity(string id, bool streaming, int pid = 42, long? time = null) =>
     new(id, "Example Camera", [new(pid, streaming, time ?? now.ToFileTime())]);
 MonitorSnapshot SensorSnapshot(SensorState sensor, string[]? selected = null, int[]? excluded = null) =>
-    sensor.Snapshot([sensorProcess], excluded ?? [], devices, selected ?? [], now);
+    sensor.Snapshot([sensorProcess], excluded ?? [], devices, selected ?? ["camera:one"], now);
 Test("sensor startup is unknown, authoritative inventory includes already-active camera", () =>
 {
     var sensor = new SensorState();
@@ -120,17 +143,35 @@ Test("sensor startup is unknown, authoritative inventory includes already-active
     Equal(true, SensorSnapshot(sensor).Healthy);
     Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
     sensor.Receive([]);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    sensor.Receive([Activity("camera:one", false)]);
     Equal(CameraStatus.Inactive, SensorSnapshot(sensor).Apps.Single().Status);
+});
+Test("empty and partial sensor notifications never infer another camera stopped", () =>
+{
+    var sensor = new SensorState();
+    sensor.Receive([]);
+    Equal(false, SensorSnapshot(sensor).Healthy);
+    sensor.Receive([Activity("camera:one", true)]);
+    Equal(false, SensorSnapshot(sensor, []).Healthy);
+    Equal(CameraStatus.Unknown, SensorSnapshot(sensor, ["camera:two"]).Apps.Single().Status);
+    sensor.Receive([Activity("camera:two", false)]);
+    Equal(true, SensorSnapshot(sensor, []).Healthy);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor, []).Apps.Single().Status);
+    sensor.Receive([]);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor, []).Apps.Single().Status);
+    sensor.Receive([new("camera:one", "Example Camera", [])]);
+    Equal(CameraStatus.Inactive, SensorSnapshot(sensor, []).Apps.Single().Status);
 });
 Test("sensor camera filters and multiple cameras aggregate correctly", () =>
 {
     var sensor = new SensorState();
     sensor.Receive([Activity("camera:one", true), Activity("camera:two", false)]);
-    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor, []).Apps.Single().Status);
     Equal(CameraStatus.Inactive, SensorSnapshot(sensor, ["camera:two"]).Apps.Single().Status);
     Equal(CameraStatus.Active, SensorSnapshot(sensor, ["CAMERA:ONE"]).Apps.Single().Status);
     sensor.Receive([Activity("camera:one", false), Activity("camera:two", true)]);
-    Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    Equal(CameraStatus.Active, SensorSnapshot(sensor, []).Apps.Single().Status);
     Equal(CameraStatus.Inactive, SensorSnapshot(sensor, ["camera:one"]).Apps.Single().Status);
     Equal(false, SensorSnapshot(sensor, ["camera:missing"]).Healthy);
     Equal(CameraStatus.Unknown, SensorSnapshot(sensor, ["camera:missing"]).Apps.Single().Status);
@@ -154,9 +195,10 @@ Test("sensor unresolved clients block release, positively foreign clients do not
     Equal(false, SensorSnapshot(sensor).Healthy);
     Equal(CameraStatus.Unknown, SensorSnapshot(sensor).Apps.Single().Status);
     Equal(true, SensorSnapshot(sensor, excluded: [99]).Healthy);
-    sensor.Receive([Activity("camera:one", true), Activity("camera:one", true, 99)]);
+    sensor.Receive([new("camera:one", "Example Camera", [new(42, true, now.ToFileTime()), new(99, true, now.ToFileTime())])]);
     Equal(false, SensorSnapshot(sensor).Healthy);
     Equal(CameraStatus.Active, SensorSnapshot(sensor).Apps.Single().Status);
+    sensor.Receive([Activity("camera:two", false)]);
     Equal(true, SensorSnapshot(sensor, ["camera:two"]).Healthy);
 });
 Test("sensor PID reuse and future report times cannot activate a new identity", () =>
@@ -222,6 +264,16 @@ Test("unknown, disconnect, stale heartbeat and epoch prevent false off", () =>
     Equal(true, decision.Update(settings, Snapshot(now, CameraStatus.Inactive), ManualMode.Automatic, now.AddSeconds(5)));
     Equal(true, decision.Update(settings, Snapshot(now.AddSeconds(6), CameraStatus.Inactive, epoch: 2), ManualMode.Automatic, now.AddSeconds(6)));
     Equal(true, decision.Update(settings, Snapshot(now.AddSeconds(8), CameraStatus.Inactive, epoch: 3), ManualMode.Automatic, now.AddSeconds(8)));
+});
+Test("removing every selected app releases during sensor failure without disabling manual-on", () =>
+{
+    var decision = new AutomationDecision();
+    var settings = Preferences();
+    decision.HoldRecoveredOwnership();
+    settings.Apps = [];
+    Equal(false, decision.Update(settings, null, ManualMode.Automatic, now));
+    Equal(true, decision.Update(settings, null, ManualMode.ForceOn, now));
+    Equal(false, decision.Update(settings, null, ManualMode.Automatic, now));
 });
 Test("positive observed activity can turn on despite an uncertain baseline", () =>
 {
@@ -333,8 +385,9 @@ using (var content = ElgatoTransport.CreateWriteContent(new(1, 26, 205)))
     passed++; Console.WriteLine("PASS Elgato HTTP writes have explicit byte length, no chunked JSON or charset suffix");
 }
 var fake = new FakeLights();
+var lightClock = new ManualClock(now);
 OwnershipJournal? journal = null;
-var automation = new LightAutomation(fake, value => journal = value);
+var automation = new LightAutomation(fake, value => journal = value, lightClock);
 await automation.ReconcileAsync(true, [light], default);
 Equal(new LightState(1, 40, 250), fake.State);
 Equal(1, journal!.Lights.Count);
@@ -352,6 +405,7 @@ passed++; Console.WriteLine("PASS already-on lights are never owned or switched 
 fake.State = new(0, 40, 250);
 await automation.ReconcileAsync(true, [light], default);
 fake.State = new(1, 75, 250);
+lightClock.Advance(TimeSpan.FromSeconds(1));
 await automation.ReconcileAsync(true, [light], default);
 await automation.ReconcileAsync(false, [light], default);
 Equal(new LightState(1, 75, 250), fake.State);
@@ -366,12 +420,13 @@ Equal(new LightState(0, 40, 250), fake.State);
 passed++; Console.WriteLine("PASS persisted crash ownership recovers and restores");
 
 fake.FailWrite = true;
-var failedAutomation = new LightAutomation(fake, value => journal = value);
+var failedAutomation = new LightAutomation(fake, value => journal = value, lightClock);
 try { await failedAutomation.ReconcileAsync(true, [light], default); throw new Exception("Expected network error"); }
 catch (IOException) { }
 Equal(1, journal!.Lights.Count);
 fake.FailWrite = false;
 passed++; Console.WriteLine("PASS failed writes retain recovery intent");
+lightClock.Advance(TimeSpan.FromSeconds(2));
 await failedAutomation.ReconcileAsync(true, [light], default);
 Equal(new LightState(1, 40, 250), fake.State);
 Equal(true, journal!.Lights.Single().AppliedConfirmed);
@@ -397,6 +452,172 @@ Test("older ownership journals retain confirmed-state restoration semantics", ()
     Equal(true, JsonSerializer.Deserialize(json, AppJson.Default.OwnershipJournal)!.Lights.Single().AppliedConfirmed);
 });
 
+{
+    var blocked = new TaskCompletionSource<LightState>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var reachable = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var independent = new DelegateLights((device, _) => device.Id == "blocked" ? blocked.Task : Task.FromResult(new LightState(0, 40, 250)),
+        (_, _, _) => { reachable.TrySetResult(); return Task.CompletedTask; });
+    var parallel = new LightAutomation(independent, _ => { });
+    var reconcile = parallel.ReconcileAsync(true, [light with { Id = "blocked" }, light], default);
+    try
+    {
+        await reachable.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Equal(false, reconcile.IsCompleted);
+    }
+    finally { blocked.TrySetException(new IOException("Offline fixture")); }
+    try { await reconcile; throw new Exception("Expected partial network error"); }
+    catch (IOException) { }
+    Equal(1, parallel.Owned.Count);
+    passed++; Console.WriteLine("PASS a blocked light cannot delay another light's activation");
+}
+{
+    var retryClock = new ManualClock(now);
+    int reads = 0;
+    bool offline = true;
+    var state = new LightState(0, 37, 220);
+    var retryTransport = new DelegateLights((_, _) =>
+    {
+        reads++;
+        return offline ? Task.FromException<LightState>(new IOException("Offline fixture")) : Task.FromResult(state);
+    }, (_, value, _) => { state = value; return Task.CompletedTask; });
+    var retryLights = new LightAutomation(retryTransport, _ => { }, retryClock);
+    async Task FailsAsync()
+    {
+        try { await retryLights.ReconcileAsync(true, [light], default); throw new Exception("Expected offline error"); }
+        catch (IOException) { }
+    }
+    await FailsAsync();
+    await FailsAsync();
+    Equal(1, reads);
+    retryClock.Advance(TimeSpan.FromMilliseconds(1999));
+    await FailsAsync();
+    Equal(1, reads);
+    retryClock.Advance(TimeSpan.FromMilliseconds(1));
+    await FailsAsync();
+    Equal(2, reads);
+    int expectedReads = 2;
+    foreach (int seconds in new[] { 4, 8, 16, 30, 30 })
+    {
+        retryClock.Advance(TimeSpan.FromMilliseconds(seconds * 1000 - 1));
+        await FailsAsync();
+        Equal(expectedReads, reads);
+        retryClock.Advance(TimeSpan.FromMilliseconds(1));
+        await FailsAsync();
+        Equal(++expectedReads, reads);
+    }
+    offline = false;
+    retryClock.Advance(TimeSpan.FromSeconds(30));
+    await retryLights.ReconcileAsync(true, [light], default);
+    Equal(1, state.On);
+    await retryLights.ReconcileAsync(false, [light], default);
+    Equal(new LightState(0, 37, 220), state);
+    passed++; Console.WriteLine("PASS offline light retries back off at exact boundaries, recover and restore original state");
+}
+{
+    var pollingClock = new ManualClock(now);
+    int reads = 0;
+    var polling = new LightAutomation(new DelegateLights((_, _) =>
+    {
+        reads++;
+        return Task.FromResult(new LightState(1, 40, 250));
+    }, (_, _, _) => throw new InvalidOperationException("Already-on light must not be written.")), _ => { }, pollingClock);
+    await polling.ReconcileAsync(true, [light], default);
+    await polling.ReconcileAsync(true, [light], default);
+    Equal(1, reads);
+    pollingClock.Advance(TimeSpan.FromMilliseconds(999));
+    await polling.ReconcileAsync(true, [light], default);
+    Equal(1, reads);
+    pollingClock.Advance(TimeSpan.FromMilliseconds(1));
+    await polling.ReconcileAsync(true, [light], default);
+    Equal(2, reads);
+    passed++; Console.WriteLine("PASS healthy light polling is limited at the exact one-second boundary");
+}
+{
+    var ackClock = new ManualClock(now);
+    var state = new LightState(0, 40, 250);
+    bool loseAck = true;
+    OwnershipJournal? ackJournal = null;
+    var ackTransport = new DelegateLights((_, _) => Task.FromResult(state), (_, value, _) =>
+    {
+        state = value;
+        if (loseAck) throw new IOException("Device applied write but acknowledgment was lost.");
+        return Task.CompletedTask;
+    });
+    var ackLights = new LightAutomation(ackTransport, value => ackJournal = value, ackClock);
+    try { await ackLights.ReconcileAsync(true, [light], default); throw new Exception("Expected lost acknowledgment"); }
+    catch (IOException) { }
+    Equal(false, ackJournal!.Lights.Single().AppliedConfirmed);
+    loseAck = false;
+    ackClock.Advance(TimeSpan.FromSeconds(2));
+    await ackLights.ReconcileAsync(true, [light], default);
+    Equal(true, ackJournal!.Lights.Single().AppliedConfirmed);
+    state = state with { On = 0 };
+    ackClock.Advance(TimeSpan.FromSeconds(1));
+    await ackLights.ReconcileAsync(true, [light], default);
+    Equal(0, state.On);
+    Equal(0, ackJournal!.Lights.Count);
+    passed++; Console.WriteLine("PASS lost write acknowledgments become confirmed on readback, preserving subsequent external manual-off");
+}
+{
+    var endpointTransport = new FakeLights();
+    OwnershipJournal? endpointJournal = null;
+    var endpointLights = new LightAutomation(endpointTransport, value => endpointJournal = value);
+    await endpointLights.ReconcileAsync(true, [light], default);
+    var changed = light with { Host = "192.0.2.11", InterfaceId = "replacement-lan" };
+    await endpointLights.ReconcileAsync(true, [changed], default);
+    Equal(changed, endpointJournal!.Lights.Single().Device);
+    await endpointLights.ReconcileAsync(false, [changed], default);
+    Equal(changed, endpointTransport.LastDevice);
+    Equal(new LightState(0, 40, 250), endpointTransport.State);
+    Equal(0, endpointJournal!.Lights.Count);
+    passed++; Console.WriteLine("PASS rediscovered endpoint/interface updates existing ownership before restoration");
+}
+{
+    var durableClock = new ManualClock(now);
+    var durableTransport = new FakeLights();
+    bool storageBroken = true;
+    bool failAfterRestore = false;
+    OwnershipJournal? durableJournal = null;
+    var durable = new LightAutomation(durableTransport, value =>
+    {
+        if (storageBroken && (!failAfterRestore || durableTransport.Writes >= 2))
+            throw new IOException("Synthetic journal failure");
+        durableJournal = value;
+    }, durableClock);
+    try { await durable.ReconcileAsync(true, [light], default); throw new Exception("Expected persistence error"); }
+    catch (IOException) { }
+    Equal(0, durableTransport.Writes);
+    storageBroken = false;
+    durableClock.Advance(TimeSpan.FromSeconds(2));
+    await durable.ReconcileAsync(true, [light], default);
+    Equal(1, durableTransport.Writes);
+    Equal(true, durableJournal!.Lights.Single().AppliedConfirmed);
+    storageBroken = true;
+    failAfterRestore = true;
+    try { await durable.ReconcileAsync(false, [light], default); throw new Exception("Expected persistence error"); }
+    catch (IOException) { }
+    storageBroken = false;
+    await durable.ReconcileAsync(false, [light], default);
+    Equal(0, durableJournal!.Lights.Count);
+    Equal(new LightState(0, 40, 250), durableTransport.State);
+    passed++; Console.WriteLine("PASS journal failures prevent unrecorded writes and retry pending persistence");
+}
+{
+    int requests = 0;
+    var responseTransport = new ElgatoTransport(_ => new HttpClient(new FixtureHttp(_ =>
+    {
+        int request = Interlocked.Increment(ref requests);
+        return new(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(request == 1 ? "{bad-json" :
+                "{\"numberOfLights\":1,\"lights\":[{\"on\":0,\"brightness\":26,\"temperature\":205}]}")
+        };
+    })) { BaseAddress = new Uri("http://192.0.2.10:9123") });
+    try { await responseTransport.ReadAsync(light, default); throw new Exception("Expected malformed response error"); }
+    catch (InvalidDataException ex) { Equal(true, ex.InnerException is JsonException); }
+    Equal(new LightState(0, 26, 205), await responseTransport.ReadAsync(light, default));
+    passed++; Console.WriteLine("PASS malformed device JSON is recoverable I/O failure, not a fatal automation worker exception");
+}
 var partial = new FakeLights { FailId = "bad" };
 var multi = new LightAutomation(partial, _ => { });
 try
@@ -421,6 +642,59 @@ finally
 {
     File.Delete(Path.Combine(directory, "settings.json"));
     Directory.Delete(directory);
+}
+using (var retryStop = new CancellationTokenSource())
+{
+    var sensor = new SensorState();
+    long retiredEpoch = sensor.Epoch;
+    int attempts = 0, failures = 0;
+    await SensorMonitorRecovery.RunAsync(_ =>
+    {
+        if (++attempts == 1) throw new System.ComponentModel.Win32Exception(1722, "Process owner query failed.");
+        Equal(false, sensor.Snapshot([], [], [], [], DateTimeOffset.UtcNow).Healthy);
+        Equal(false, sensor.Receive(retiredEpoch, [new("camera:retry", "Retry Camera", [])]));
+        Equal(false, sensor.Snapshot([], [], [], [], DateTimeOffset.UtcNow).Healthy);
+        Equal(true, sensor.Receive(sensor.Epoch, [new("camera:retry", "Retry Camera", [])]));
+        Equal(true, sensor.Snapshot([], [], [], [], DateTimeOffset.UtcNow).Healthy);
+        retryStop.Cancel();
+        return Task.CompletedTask;
+    }, ex =>
+    {
+        Equal(1722, ((System.ComponentModel.Win32Exception)ex).NativeErrorCode);
+        failures++;
+        sensor.Invalidate(ex.Message);
+        Equal(false, sensor.Snapshot([], [], [], [], DateTimeOffset.UtcNow).Healthy);
+    }, TimeSpan.Zero, retryStop.Token);
+    Equal(2, attempts);
+    Equal(1, failures);
+    passed++; Console.WriteLine("PASS transient process lookup failure retries with unknown state until fresh reports; retired callbacks are rejected");
+}
+using (var retryStop = new CancellationTokenSource())
+{
+    int attempts = 0;
+    var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var recovery = SensorMonitorRecovery.RunAsync(_ =>
+    {
+        attempts++;
+        throw new IOException("Sensor disconnected.");
+    }, _ => failed.SetResult(), TimeSpan.FromSeconds(30), retryStop.Token);
+    await failed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    retryStop.Cancel();
+    await recovery.WaitAsync(TimeSpan.FromSeconds(2));
+    Equal(1, attempts);
+    passed++; Console.WriteLine("PASS monitor retry backoff cancels promptly without starting another source");
+}
+{
+    bool reported = false, propagated = false;
+    try
+    {
+        await SensorMonitorRecovery.RunAsync(_ => throw new InvalidOperationException("Unexpected worker failure."),
+            _ => reported = true, TimeSpan.Zero, default);
+    }
+    catch (InvalidOperationException) { propagated = true; }
+    Equal(true, propagated);
+    Equal(false, reported);
+    passed++; Console.WriteLine("PASS unexpected monitor failures propagate instead of silently retrying");
 }
 if (OperatingSystem.IsWindows())
 {
@@ -488,11 +762,34 @@ internal sealed class FakeLights : ILightTransport
     internal int Writes;
     internal bool FailWrite;
     internal string? FailId;
+    internal LightDevice? LastDevice;
     public Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken) =>
         device.Id == FailId ? Task.FromException<LightState>(new IOException("Synthetic offline light")) : Task.FromResult(State);
     public Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken)
     {
         if (FailWrite) throw new IOException("Synthetic write failure");
+        LastDevice = device;
         Writes++; State = state; return Task.CompletedTask;
     }
+
+}
+
+internal sealed class ManualClock(DateTimeOffset now) : TimeProvider
+{
+    private DateTimeOffset _now = now;
+    public override DateTimeOffset GetUtcNow() => _now;
+    internal void Advance(TimeSpan duration) => _now += duration;
+}
+
+internal sealed class DelegateLights(Func<LightDevice, CancellationToken, Task<LightState>> read,
+    Func<LightDevice, LightState, CancellationToken, Task> write) : ILightTransport
+{
+    public Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken) => read(device, cancellationToken);
+    public Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken) => write(device, state, cancellationToken);
+}
+
+internal sealed class FixtureHttp(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+{
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+        Task.FromResult(respond(request));
 }
