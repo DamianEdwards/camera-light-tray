@@ -1,0 +1,162 @@
+{
+  "schemaVersion": 2,
+  "title": "Design System: Camera Light Tray — Design exploration",
+  "scope": "designs",
+  "status": "Provisional alternatives; no direction selected; not authoritative for native implementation until user approval.",
+  "source": ["PRODUCT.md", "README.md", "index.html contract comment", "review.css", "review.js"],
+  "extensions": {
+    "focusRing": {
+      "value": "3px solid #428cc7",
+      "offset": "3px",
+      "selector": "button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible"
+    },
+    "shadows": [
+      { "name": "flyout", "value": "0 10px 26px #23334426, 0 2px 4px #2333441a" },
+      { "name": "settings-window", "value": "0 14px 30px #27405a15" },
+      { "name": "webkit-slider-thumb", "value": "0 1px 3px #0004" },
+      { "name": "toast", "value": "0 6px 18px #0002" }
+    ],
+    "motion": [
+      { "name": "button", "value": "background-color 160ms ease-out, border-color 160ms ease-out" },
+      { "name": "auto-knob", "value": "transform 150ms ease-out", "enabledTransform": "translateX(11px)" },
+      { "name": "toast", "value": "opacity 160ms ease-out", "visibleDurationMs": 3500 },
+      { "name": "discovery", "value": "spin 1.2s linear infinite", "keyframeTo": "rotate(360deg)" }
+    ],
+    "reducedMotion": {
+      "query": "(prefers-reduced-motion: reduce)",
+      "selector": "*, *:before, *:after",
+      "animation": "none !important",
+      "transition": "none !important"
+    },
+    "typographyMeta": {
+      "display": { "refersTo": "typography.display", "purpose": "Review introduction", "narrowFontSize": "27px" },
+      "headline": { "refersTo": "typography.headline", "purpose": "Settings page title", "narrowFontSize": "24px" },
+      "title": { "refersTo": "typography.title", "purpose": "Flyout name", "contractedFontSize": "13px" },
+      "device-name": { "refersTo": "typography.device-name", "purpose": "Studio equipment name", "compactFontSize": "13px" },
+      "body": { "refersTo": "typography.body", "purpose": "Operational text and settings paragraphs" },
+      "label": { "refersTo": "typography.label", "purpose": "State labels, adjustments and footer" }
+    },
+    "typographyFeatures": {
+      "fontSynthesis": "none",
+      "sliderOutputFontVariantNumeric": "tabular-nums"
+    },
+    "variants": {
+      "flyout-dark": {
+        "compositions": ["Studio", "Compact"],
+        "selector": ".flyout",
+        "tokens": {
+          "--surface": "{colors.dark-surface}",
+          "--raised": "{colors.dark-raised}",
+          "--hover": "{colors.dark-hover}",
+          "--line": "{colors.dark-line}",
+          "--text": "{colors.dark-text}",
+          "--muted": "{colors.dark-muted}",
+          "--subtle": "{colors.dark-subtle}",
+          "--accent": "{colors.dark-accent}",
+          "--accent-ink": "{colors.dark-accent-ink}",
+          "--good": "{colors.dark-good}",
+          "--warning": "{colors.dark-warning}"
+        }
+      },
+      "flyout-light": {
+        "compositions": ["Gallery"],
+        "selector": ".gallery",
+        "tokens": {
+          "--surface": "{colors.light-surface}",
+          "--raised": "{colors.light-raised}",
+          "--hover": "{colors.light-hover}",
+          "--line": "{colors.light-line}",
+          "--text": "{colors.light-text}",
+          "--muted": "{colors.light-muted}",
+          "--subtle": "{colors.light-subtle}",
+          "--accent": "{colors.light-accent}",
+          "--accent-ink": "{colors.light-accent-ink}",
+          "--good": "{colors.light-good}",
+          "--warning": "{colors.light-warning}"
+        }
+      },
+      "settings-light": {
+        "selector": ".settings-window",
+        "tokens": {
+          "--stext": "{colors.settings-light-text}",
+          "--smuted": "{colors.settings-light-muted}",
+          "--sline": "{colors.settings-light-line}",
+          "--sbg": "{colors.settings-light-background}",
+          "--snav": "{colors.settings-light-navigation}",
+          "--saccent": "{colors.settings-light-accent}"
+        }
+      },
+      "settings-dark": {
+        "selector": ".settings-window.dark",
+        "tokens": {
+          "--stext": "{colors.settings-dark-text}",
+          "--smuted": "{colors.settings-dark-muted}",
+          "--sline": "{colors.settings-dark-line}",
+          "--sbg": "{colors.settings-dark-background}",
+          "--snav": "{colors.settings-dark-navigation}",
+          "--saccent": "{colors.settings-dark-accent}"
+        }
+      }
+    },
+    "semanticStates": {
+      "power": {
+        "on": {
+          "label": "On",
+          "ariaPressed": true,
+          "panelFill": "Temperature-dependent --lit-fill; fallback {colors.panel-lit-fallback}",
+          "panelEdge": "{colors.panel-lit-edge}",
+          "buttonBackground": "Variant --accent",
+          "buttonInk": "Variant --accent-ink"
+        },
+        "off": {
+          "label": "Off",
+          "ariaPressed": false,
+          "panelFill": "{colors.panel-off}",
+          "panelEdge": "{colors.panel-off-edge}",
+          "buttonBackground": "transparent"
+        },
+        "unknown": {
+          "label": "Unreachable · power unknown",
+          "ariaPressed": "omitted",
+          "powerDisabled": true,
+          "panelFill": "{colors.panel-unknown}",
+          "panelEdge": "{colors.panel-unknown-edge}",
+          "badge": { "text": "?", "fill": "#7b8790", "stroke": "#d8e0e6", "textFill": "#fff" }
+        },
+        "unsupported": {
+          "label": "Unsupported TLS model",
+          "powerAppearance": "unknown",
+          "powerDisabled": true,
+          "adjustmentReading": "Unavailable"
+        }
+      },
+      "automation": {
+        "active": { "label": "Camera in use", "dot": "Variant --good" },
+        "waiting": { "labels": ["Choose trigger apps", "Camera state unknown"], "dot": "Variant --warning" },
+        "quiet": { "labels": ["Ready for your next call", "Camera use ignored", "Automation off", "Automation paused"], "dot": "Variant --subtle" },
+        "auto": { "label": "Auto with camera", "switchAriaPressed": true },
+        "manualOnly": { "label": "Manual only", "switchAriaPressed": false },
+        "manualSession": { "label": "Manual this session", "action": "Resume auto", "meaning": "Proposed session override; power and automation configuration remain separate." },
+        "eligibility": "Selected app using a selected trigger camera, or the explicit All cameras choice, with selected lights and automation enabled.",
+        "emptyAppSelection": "No automatic activation; not every app.",
+        "unknownCamera": "Holding owned lights · checking again"
+      },
+      "unavailableAdjustments": {
+        "inputsDisabled": true,
+        "rangeRowOpacity": 0.4,
+        "rangeCursor": "not-allowed",
+        "offlineReadingSuffix": " · last known",
+        "disabledButtonOpacity": 0.5
+      },
+      "panelTemperature": {
+        "source": "review.js panelColor",
+        "minKelvin": 2900,
+        "maxKelvin": 7000,
+        "warmRGB": [255, 230, 182],
+        "coolRGB": [226, 242, 255],
+        "interpolation": "Clamp (temperature - 2900) / 4100 to 0..1; linearly blend and round each RGB channel.",
+        "brightnessAffectsArtwork": false
+      }
+    }
+  }
+}

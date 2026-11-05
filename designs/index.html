@@ -1,0 +1,125 @@
+<!doctype html>
+<!--
+THESIS: A tray-first lighting utility; distinguish power from automation at a glance, not with a wall of diagnostics.
+OWN-WORLD: Control Center's compact equipment grammar, Windows system typography, charcoal or soft-grey fields, warm illuminated panels.
+STORY: See what is on and why; make one quick adjustment; use the cog for explicit app/camera/light setup.
+FIRST VIEWPORT: Three comparable flyouts in a review gallery; inspect one at real scale and open its paired settings window.
+FORM: User-pinned Control Center inspiration; three compositions, not a selected production identity. No random world roll; final choice remains open.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Camera Light Tray — Design review</title>
+  <link rel="icon" type="image/svg+xml" href="assets/app-icon.svg">
+  <link rel="stylesheet" href="review.css">
+</head>
+<body>
+  <svg width="0" height="0" aria-hidden="true" style="position:absolute;overflow:hidden">
+    <defs>
+      <symbol id="key-light" viewBox="0 0 160 180">
+        <path d="M79 122v43m-19 4h38" fill="none" stroke="#677177" stroke-width="5" stroke-linecap="round"/>
+        <path d="M40 86v30q0 10 10 10h60q10 0 10-10V86" fill="none" stroke="#566168" stroke-width="5"/>
+        <rect x="18" y="18" width="124" height="91" rx="12" fill="#343c42" stroke="#6c767d" stroke-width="2"/>
+        <rect x="25" y="25" width="110" height="77" rx="7" fill="var(--panel-fill,#c8cdd0)"/>
+        <path d="M32 29h94" stroke="var(--panel-edge,#e9ecee)" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="24" cy="114" r="4" fill="#98a3ab"/><circle cx="136" cy="114" r="4" fill="#98a3ab"/>
+        <path d="M49 22h62" stroke="#8d979d" stroke-width="1" opacity=".55"/>
+      </symbol>
+      <symbol id="key-light-air" viewBox="0 0 160 180">
+        <path d="M80 105v49" fill="none" stroke="#647078" stroke-width="6" stroke-linecap="round"/>
+        <ellipse cx="80" cy="160" rx="40" ry="8" fill="#303a41" stroke="#647078" stroke-width="2"/>
+        <path d="M58 157h44" stroke="#88939a" stroke-width="1.5" stroke-linecap="round"/>
+        <rect x="36" y="12" width="88" height="94" rx="14" fill="#343c42" stroke="#6c767d" stroke-width="2"/>
+        <rect x="43" y="19" width="74" height="80" rx="9" fill="var(--panel-fill,#c8cdd0)"/>
+        <path d="M50 23h60" stroke="var(--panel-edge,#e9ecee)" stroke-width="2" stroke-linecap="round"/>
+        <circle cx="80" cy="109" r="5" fill="#8c979e"/>
+      </symbol>
+      <symbol id="generic-light" viewBox="0 0 160 180">
+        <path d="M80 116v45m-24 7h48" stroke="#677177" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="80" cy="65" r="48" fill="#343c42" stroke="#6c767d" stroke-width="2"/>
+        <circle cx="80" cy="65" r="39" fill="var(--panel-fill,#c8cdd0)"/>
+        <path d="M54 35q26-14 52 0" fill="none" stroke="var(--panel-edge,#e9ecee)" stroke-width="2"/>
+      </symbol>
+    </defs>
+  </svg>
+  <header class="review-header">
+    <a class="review-brand" href="#compare"><img src="assets/app-icon.svg" alt="" width="36" height="36"><span>Camera Light Tray<span class="review-subtitle">Design exploration</span></span></a>
+    <nav aria-label="Review views">
+      <button data-view="compare" aria-pressed="true">Compare</button>
+      <button data-view="focus" aria-pressed="false">Try a design</button>
+      <button data-view="settings" aria-pressed="false">Full settings</button>
+      <button data-view="details" aria-pressed="false">Artwork &amp; decisions</button>
+    </nav>
+  </header>
+  <main>
+    <div class="intro">
+      <div><h1>Less setup screen. More light.</h1><p>Three tray-first layouts inspired by Control Center, with an unmistakable split between <strong>on/off</strong> and <strong>automatic/manual</strong>.</p></div>
+      <p class="simulation"><span class="sim-dot"></span>Interactive mockup<br><span>No camera access or light writes</span></p>
+    </div>
+    <section id="compare" class="review-view" aria-label="Compare three tray designs">
+      <div class="compare-grid">
+        <article class="direction">
+          <div class="direction-heading"><h2>Studio</h2><span class="recommendation">Suggested starting point</span></div>
+          <p class="direction-description">Product-led rows. Both lights and their controls fit in one calm flyout.</p>
+          <div class="comparison-host" data-comparison="studio"></div>
+          <button class="try-button" data-choose="studio">Try Studio <span aria-hidden="true">→</span></button>
+        </article>
+        <article class="direction">
+          <div class="direction-heading"><h2>Compact</h2><span class="direction-caption">Smallest footprint</span></div>
+          <p class="direction-description">A fast switchboard. Expand one light when you need brightness or warmth.</p>
+          <div class="comparison-host" data-comparison="compact"></div>
+          <button class="try-button" data-choose="compact">Try Compact <span aria-hidden="true">→</span></button>
+        </article>
+        <article class="direction">
+          <div class="direction-heading"><h2>Gallery</h2><span class="direction-caption">Roomier, native-light</span></div>
+          <p class="direction-description">Larger equipment portraits. Scan power first, reveal controls on demand.</p>
+          <div class="comparison-host" data-comparison="gallery"></div>
+          <button class="try-button" data-choose="gallery">Try Gallery <span aria-hidden="true">→</span></button>
+        </article>
+      </div>
+      <p class="review-footnote">The illustrations are original SVGs. All devices, applications and activity shown here are example data.</p>
+    </section>
+    <section id="focus" class="review-view" aria-label="Interactive tray flyout" hidden>
+      <div class="workbench">
+        <aside class="scenario-panel">
+          <h2>Try the daily interaction</h2>
+          <label>Layout<select id="layout"><option value="studio">Studio</option><option value="compact">Compact</option><option value="gallery">Gallery</option></select></label>
+          <label>Example state<select id="scenario"><option value="active">Camera in use</option><option value="idle">Camera idle</option><option value="paused">Automation paused</option><option value="none">No apps selected</option><option value="unknown">Camera state unknown</option><option value="offline">One light unreachable</option><option value="empty">No lights added</option><option value="discovering">Discovering lights</option><option value="unsupported">Unsupported TLS light</option></select></label>
+          <p>Use the power buttons, automation switches and sliders. The settings cog opens the full window below.</p>
+          <div class="interaction-note"><h3>Two separate questions</h3><p><strong>Is it on?</strong> The illuminated panel and power control answer that.</p><p><strong>Who controls it?</strong> The Auto label or Manual status answers that.</p></div>
+          <button id="reset" class="plain-button">Reset example</button>
+          <output id="interaction-log" aria-live="polite">Example camera activity is active.</output>
+        </aside>
+        <div class="desktop-stage">
+          <div class="stage-caption">Tray flyout · logical Windows pixels</div>
+          <div id="focus-host"></div>
+          <div class="taskbar"><span class="clock">10:24</span><button class="tray-button" aria-label="Show or hide Camera Light Tray flyout"><img src="assets/tray-icon.svg" alt="" width="20" height="20"></button><span aria-hidden="true" class="taskbar-network"></span></div>
+        </div>
+      </div>
+    </section>
+    <section id="settings" class="review-view" aria-label="Full application settings" hidden>
+      <div class="settings-intro"><h2>A quieter place to set things up</h2><p>One navigation rail, clear selection rules, and diagnostics only when needed. Controls below are simulated.</p></div>
+      <div id="settings-host"></div>
+    </section>
+    <section id="details" class="review-view" aria-label="Artwork and open design decisions" hidden>
+      <div class="details-grid">
+        <div class="artwork"><h2>Recognizable equipment</h2><p>The wider panel and clamp of the Key Light; the square panel and circular base of the Air. Lit surfaces carry power state without needing a green badge.</p><img src="assets/lights.svg" alt="Original Key Light and Key Light Air vector artwork, with warm lit panels and dark unlit panels"><a href="assets/lights.svg" target="_blank" rel="noopener">Open original light SVGs <span aria-hidden="true">↗</span></a></div>
+        <div class="icon-work"><h2>A tray icon that belongs</h2><p>A soft panel around a camera lens. Simple enough to survive at 16 pixels; the app icon uses the same silhouette.</p><div class="icon-preview"><img src="assets/app-icon.svg" alt="App icon: camera lens inside a lighting panel" width="112" height="112"><div><div class="tray-sizes"><img src="assets/tray-icon.svg" alt="Monochrome tray icon at 16 pixels" width="16" height="16"><img src="assets/tray-icon.svg" alt="Monochrome tray icon at 20 pixels" width="20" height="20"><img src="assets/tray-icon.svg" alt="Monochrome tray icon at 32 pixels" width="32" height="32"></div><p>16 / 20 / 32 px</p></div></div><a href="assets/tray-icon.svg" target="_blank" rel="noopener">Open tray SVG <span aria-hidden="true">↗</span></a></div>
+      </div>
+      <div class="decision-notes">
+        <h2>What needs a choice before native implementation</h2>
+        <div><h3>Composition</h3><p>Studio keeps controls visible; Compact saves space; Gallery gives the equipment more presence. These can share the same settings window.</p></div>
+        <div><h3>Manual control</h3><p>Proposed: changing power, brightness or temperature puts that light in Manual for the current camera session. “Resume auto” gives control back explicitly. It must never fight your edit.</p></div>
+        <div><h3>Apps</h3><p>Preserve the current rule: <strong>only selected apps trigger lighting</strong>. No selection means automation will not turn anything on. An “Any app” mode would be a new, explicit opt-in—not an empty-list shortcut.</p></div>
+        <div><h3>Cameras</h3><p>Use an explicit “All cameras” choice instead of requiring people to infer what an empty checkbox list means. Specific cameras remain independently selectable.</p></div>
+        <div><h3>Technical detail</h3><p>Keep uncertainty honest with “Checking camera” or “Camera state unknown.” Show troubleshooting on demand; do not convert missing reports into an idle status for visual tidiness.</p></div>
+        <div><h3>What is not shipped yet</h3><p>These are reviewable mockups, not a new portable release. Native tray positioning, dismiss-on-outside-click, touch/DPI support, real manual controls, asset-model mapping and icon integration still need implementation and verification.</p></div>
+      </div>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="review.js"></script>
+</body>
+</html>

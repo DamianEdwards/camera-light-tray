@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="400" viewBox="0 0 720 400">
+  <title>Original Key Light and Key Light Air illustrations, on and off</title>
+  <desc>Hand-drawn vector silhouettes for Camera Light Tray. These are not Elgato product photographs or official assets.</desc>
+  <defs>
+    <symbol id="key-light" viewBox="0 0 160 180">
+      <path d="M79 122v43m-19 4h38" fill="none" stroke="#677177" stroke-width="5" stroke-linecap="round"/>
+      <path d="M40 86v30q0 10 10 10h60q10 0 10-10V86" fill="none" stroke="#566168" stroke-width="5"/>
+      <rect x="18" y="18" width="124" height="91" rx="12" fill="#343c42" stroke="#6c767d" stroke-width="2"/>
+      <rect x="25" y="25" width="110" height="77" rx="7" fill="var(--panel-fill,#c8cdd0)"/>
+      <path d="M32 29h94" stroke="var(--panel-edge,#e9ecee)" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="24" cy="114" r="4" fill="#98a3ab"/>
+      <circle cx="136" cy="114" r="4" fill="#98a3ab"/>
+      <path d="M49 22h62" stroke="#8d979d" stroke-width="1" opacity=".55"/>
+    </symbol>
+    <symbol id="key-light-air" viewBox="0 0 160 180">
+      <path d="M80 105v49" fill="none" stroke="#647078" stroke-width="6" stroke-linecap="round"/>
+      <ellipse cx="80" cy="160" rx="40" ry="8" fill="#303a41" stroke="#647078" stroke-width="2"/>
+      <path d="M58 157h44" stroke="#88939a" stroke-width="1.5" stroke-linecap="round"/>
+      <rect x="36" y="12" width="88" height="94" rx="14" fill="#343c42" stroke="#6c767d" stroke-width="2"/>
+      <rect x="43" y="19" width="74" height="80" rx="9" fill="var(--panel-fill,#c8cdd0)"/>
+      <path d="M50 23h60" stroke="var(--panel-edge,#e9ecee)" stroke-width="2" stroke-linecap="round"/>
+      <circle cx="80" cy="109" r="5" fill="#8c979e"/>
+    </symbol>
+    <symbol id="generic-light" viewBox="0 0 160 180">
+      <path d="M80 116v45m-24 7h48" stroke="#677177" stroke-width="5" stroke-linecap="round"/>
+      <circle cx="80" cy="65" r="48" fill="#343c42" stroke="#6c767d" stroke-width="2"/>
+      <circle cx="80" cy="65" r="39" fill="var(--panel-fill,#c8cdd0)"/>
+      <path d="M54 35q26-14 52 0" fill="none" stroke="var(--panel-edge,#e9ecee)" stroke-width="2"/>
+    </symbol>
+  </defs>
+  <rect width="720" height="400" rx="24" fill="#202329"/>
+  <g font-family="Segoe UI, sans-serif" text-anchor="middle" fill="#e7ebed">
+    <text x="360" y="39" font-size="20" font-weight="600">Light state, not just a status dot</text>
+    <g style="--panel-fill:#fff1cb;--panel-edge:#fffdf0">
+      <use href="#key-light" x="24" y="78" width="160" height="180"/>
+      <use href="#key-light-air" x="376" y="78" width="160" height="180"/>
+    </g>
+    <g style="--panel-fill:#575f66;--panel-edge:#737c83">
+      <use href="#key-light" x="200" y="78" width="160" height="180"/>
+      <use href="#key-light-air" x="552" y="78" width="160" height="180"/>
+    </g>
+    <g font-size="14">
+      <text x="104" y="288">Key Light · On</text>
+      <text x="280" y="288">Key Light · Off</text>
+      <text x="456" y="288">Key Light Air · On</text>
+      <text x="632" y="288">Key Light Air · Off</text>
+    </g>
+    <text x="360" y="347" font-size="13" fill="#aeb8be">Original SVG artwork · no downloaded product imagery</text>
+  </g>
+</svg>

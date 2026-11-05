@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Camera Light Tray app icon concept</title>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="#252b31"/>
+  <path d="M54 50h148a13 13 0 0 1 13 13v96a13 13 0 0 1-13 13H54a13 13 0 0 1-13-13V63a13 13 0 0 1 13-13Z" fill="#fff0cb"/>
+  <path d="M94 187h68M128 172v30" stroke="#b5c7d4" stroke-width="12" stroke-linecap="round"/>
+  <circle cx="128" cy="110" r="36" fill="#252b31"/>
+  <circle cx="128" cy="110" r="20" fill="#b5c7d4"/>
+  <circle cx="136" cy="102" r="7" fill="#f7fbff"/>
+</svg>
