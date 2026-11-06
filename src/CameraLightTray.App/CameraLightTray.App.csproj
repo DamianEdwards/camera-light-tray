@@ -13,9 +13,11 @@
     <OptimizationPreference>Size</OptimizationPreference>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <Version>0.1.0</Version>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="Assets\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <ProjectReference Include="..\CameraLightTray.Core\CameraLightTray.Core.csproj" />
     <Compile Include="..\CameraLightTray.Monitor\ProcessCatalog.cs" Link="Platform\ProcessCatalog.cs" />
     <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />

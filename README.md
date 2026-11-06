@@ -33,14 +33,20 @@ records images, audio or video. The app sends no telemetry.
   camera needs its own reported baseline; updates for another camera do not
   erase existing activity. Observations are renewed every minute to recover
   a silently stalled subscription. Unknown continues to hold owned lights.
-- Separate Overview, Apps, Cameras, Lights, and Rules pages. App suggestions
+- A compact **Studio tray flyout** with original product illustrations, distinct
+  on/off/unknown states, independent Auto switches, power controls, brightness
+  and color-temperature sliders. A cog opens the full settings window.
+  The flyout anchors to the tray icon, stays within the monitor work area,
+  and dismisses on Escape or loss of activation.
+- Separate Automation, Apps, Cameras, Lights, and General settings. App suggestions
   prioritize saved selections, active clients, installed packages declaring
   webcam capability, and known communications apps such as Teams and Signal.
   Search or show all running processes for other apps. Suggestions are not
   proof of permission, and never enable an app automatically.
 - Explicit shared-read-only local preview, with camera selection and physical
   light-state readback. The preview selector and automation camera filter are
-  independent. Preview stops on leaving Overview, closing the window, or exit.
+  independent. Preview is under Cameras and stops on leaving that page,
+  closing the settings window, or exit.
 - Explicit LAN-interface selection, mDNS `_elg._tcp.local` discovery, read-only
   connection diagnostics and manual IPv4 configuration for port 9123.
   Discovery joins the standard IPv4 multicast group on UDP 5353 using the
@@ -63,6 +69,14 @@ records images, audio or video. The app sends no telemetry.
   ownership relinquishment, pause, manual-on and manual-off/release.
   Disabling automation or removing every app selection releases owned changes
   even while the sensor is unavailable.
+- Manual power/brightness/temperature edits serialize with automation and
+  preserve fields you did not change. The light enters a per-light manual
+  override, so automatic activation will not fight your edit. **Resume auto**
+  explicitly returns control; completing an automatic activation also ends
+  the override. Manual edits are not rolled back when a call ends. Failed or
+  lost acknowledgments retain recovery intent, and displayed confirmed edits
+  require matching device readback. Temperature controls use Kelvin, converted
+  to the classic firmware's 143–344 mired range.
 - An optional experimental fixed-function LocalService ETW helper and local
   authenticated IPC remain available for diagnostics and installed-service CI.
   **The UI uses normal-user sensor reports, not this legacy helper.**
@@ -81,18 +95,20 @@ a stable release.
    WinApp SDK 1.x is not sufficient. This repository does not download or bundle
    the runtime into the application ZIP.
 2. Extract the entire ZIP into a stable directory and run `CameraLightTray.exe`
-   as yourself, **not as administrator**. The Overview should report
-   **Windows sensor activity reports connected**. Do not install/repair the
+   as yourself, **not as administrator**. The tray flyout shows the current
+   camera/automation state. Open the cog for full settings; detailed monitor
+   health is under Cameras. Do not install/repair the
    legacy helper to fix a sensor-report or light-networking problem.
 3. In **Apps**, select apps such as Windows Camera, Teams or Signal.
-   In **Cameras**, optionally select trigger cameras; no checked camera means all cameras.
+   In **Cameras**, choose All cameras or select specific trigger cameras.
+   No selected **apps** means no automatic activation, not any app.
    In **Lights**, choose your physical LAN interface, discover lights, test
    connections (read only), and select the lights to automate.
-4. On **Overview**, explicitly enable physical automation. Open a selected
+4. In **Automation** (or the tray flyout), explicitly enable automation. Open a selected
    app's camera: the selected lights should turn on after debounce and restore
    their previous state after capture stops plus leave grace.
 
-For a visible verification, choose the same camera in **Local camera preview**
+For a visible verification, expand **Cameras / Local camera preview**, choose the same camera,
 and press **Start preview**. Preview alone does not grant automation permission:
 select this exact `CameraLightTray.exe` under Apps if you want its preview to
 trigger lights. Alternatively, leave it unselected and watch another selected
@@ -108,7 +124,12 @@ select supported trigger cameras explicitly if another virtual or unavailable
 camera cannot provide an activity baseline. Manually entered IP addresses
 are fixed endpoints; use mDNS discovery for automatic DHCP endpoint updates.
 
-Closing the window hides it; right-click the tray icon to pause/resume or exit.
+Click the tray icon for quick light controls; the cog opens full settings.
+To launch directly into settings when the app is not already running, use
+`CameraLightTray.exe --settings`.
+Unknown/unreachable power is never depicted as off, and stale readings disable
+physical controls. Newly discovered lights remain opted out until selected.
+Closing the settings window hides it; right-click the tray icon to pause/resume or exit.
 **Start at login** writes only the current user's Run registration. Normal
 login launches the UI hidden and never invokes setup or UAC. Leave the app in
 its stable location when enabling login startup. Disable that preference
@@ -187,8 +208,8 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.4
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.4\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.5
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.5\CameraLightTray.exe
 ```
 
 On a Windows 11 desktop, the native test executable also supports a real,
@@ -215,7 +236,10 @@ lock prevents concurrent instances from sharing one directory.
 
 The unattended smoke run opens a non-activating native Reactor window, invokes
 real native controls against synthetic camera/lights, checks activation and
-restoration, and exits. It never installs the helper, changes startup or
+restoration, exercises the Studio flyout, manual sliders/power and settings cog,
+exports synthetic client-area screenshots, and exits. Demo flyouts remain visible
+when deactivated to support background inspection; normal flyouts dismiss.
+It never installs the helper, changes startup or
 contacts hardware. `tools\get-runtime.ps1` only inspects the resolved runtime
 package; it does not install it. CI registers that Microsoft-signed shared
 framework **only on its disposable hosted runner** before the UI smoke.
@@ -224,6 +248,14 @@ Build and publish sequentially (their intermediate directories are shared).
 Packaging refuses an existing version output directory rather than mixing old
 and new payloads. Remove only the named generated directory before rebuilding
 the same package version. Do not build from or modify a reference checkout.
+
+Native light artwork is original SVG, not downloaded product photography.
+The classic Key Light uses a wide panel, ball mount and desk clamp; the original
+Key Light Air uses a square panel and weighted base. Unknown product metadata
+uses neutral generic artwork. Saved product names survive custom display names.
+The checked-in `.ico` files provide multiple sizes for caption, taskbar and
+light/dark system-tray themes. `node tools\generate-light-art.mjs` regenerates
+the on/off/unknown variants from the original SVG source shapes.
 
 ## Camera source and honest uncertainty
 

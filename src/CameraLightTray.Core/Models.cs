@@ -11,7 +11,10 @@ public sealed record MonitorSnapshot(int Version, long Sequence, long Epoch, Dat
     bool Healthy, string Detail, CameraApp[] Apps);
 public sealed record LanAddress(string InterfaceId, string Name, string Address, string Mask);
 public sealed record LightDevice(string Id, string Name, string Host, int Port, string InterfaceId,
-    bool Enabled = false, bool Tls = false);
+    bool Enabled = false, bool Tls = false)
+{
+    public string? ProductName { get; init; }
+}
 public sealed record LightState(int On, int Brightness, int Temperature);
 public sealed record Settings
 {
@@ -34,7 +37,7 @@ public sealed record Settings
             throw new InvalidDataException("Activation must be 100-10000ms; leave grace must be 500-60000ms.");
         if (Apps.Count > 500 || Lights.Count > 100) throw new InvalidDataException("Too many configured items.");
         if (Apps.Any(a => a is null || string.IsNullOrWhiteSpace(a.Key) || string.IsNullOrWhiteSpace(a.Name)) ||
-            Lights.Any(l => l is null))
+            Lights.Any(l => l is null || string.IsNullOrWhiteSpace(l.Name)))
             throw new InvalidDataException("App/light identities and names are required.");
         if (Apps.DistinctBy(a => a.Key, StringComparer.OrdinalIgnoreCase).Count() != Apps.Count ||
             Lights.DistinctBy(l => l.Id).Count() != Lights.Count)
@@ -48,6 +51,7 @@ public sealed record Settings
 [JsonSerializable(typeof(MonitorSnapshot))]
 [JsonSerializable(typeof(LightResponse))]
 [JsonSerializable(typeof(LightRequest))]
+[JsonSerializable(typeof(LightDevice))]
 [JsonSerializable(typeof(AccessoryInfo))]
 [JsonSerializable(typeof(OwnershipJournal))]
 public partial class AppJson : JsonSerializerContext;

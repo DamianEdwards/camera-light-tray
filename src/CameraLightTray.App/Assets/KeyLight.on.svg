@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="180" viewBox="0 0 160 180">
+  <title>Key Light</title>
+  <path d="M79 105v44" stroke="#293139" stroke-width="8"/>
+  <path d="M77 111v30" stroke="#84929e" stroke-width="2"/>
+  <rect x="73" y="124" width="13" height="8" rx="3" fill="#4e5b66"/>
+  <path d="M80 146v10h-16v16h27" fill="none" stroke="#6c7984" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M72 174h24" stroke="#a0aab3" stroke-width="3" stroke-linecap="round"/>
+  <path d="M80 166v8" stroke="#a0aab3" stroke-width="3"/>
+  <circle cx="80" cy="102" r="7" fill="#65717b"/>
+  <rect x="16" y="21" width="128" height="82" rx="11" fill="#343d45" stroke="#8c99a3" stroke-width="2"/>
+  <rect id="panel" x="22" y="27" width="116" height="70" rx="7" fill="#fff0cb"/>
+  <path d="M29 31h102" stroke="#fff" stroke-opacity=".25" stroke-width="2" stroke-linecap="round"/>
+  <path d="M19 40v45" stroke="#afbbc5" stroke-opacity=".5" stroke-width="1"/>
+</svg>

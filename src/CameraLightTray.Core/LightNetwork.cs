@@ -112,6 +112,11 @@ public sealed class ElgatoTransport : ILightTransport
     }
     public async Task<string> IdentifyAsync(LightDevice device, CancellationToken cancellationToken)
     {
+        var info = await IdentifyDetailsAsync(device, cancellationToken);
+        return info.DisplayName ?? info.ProductName ?? device.Name;
+    }
+    public async Task<AccessoryInfo> IdentifyDetailsAsync(LightDevice device, CancellationToken cancellationToken)
+    {
         using var client = _clients(device);
         AccessoryInfo info;
         try
@@ -120,6 +125,6 @@ public sealed class ElgatoTransport : ILightTransport
                 ?? throw new InvalidDataException("Empty accessory response.");
         }
         catch (JsonException ex) { throw new InvalidDataException("Malformed Elgato accessory response.", ex); }
-        return info.DisplayName ?? info.ProductName ?? device.Name;
+        return info;
     }
 }

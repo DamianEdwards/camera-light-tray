@@ -10,12 +10,18 @@ using CameraLightTray.Core;
 
 namespace CameraLightTray.App;
 
+internal sealed record LightObservation(LightState? State, DateTimeOffset Time, string? Error = null)
+{
+    internal bool Fresh => State is not null && Error is null && DateTimeOffset.UtcNow - Time < TimeSpan.FromSeconds(12);
+}
+
 internal sealed class AppSession
 {
     private readonly object _gate = new();
     private readonly Storage _storage;
     private readonly CancellationTokenSource _stop = new();
     private readonly LightAutomation _automation;
+    private readonly ILightTransport _transport;
     private readonly AutomationDecision _decision = new();
     private Settings _settings;
     private MonitorSnapshot? _snapshot;
@@ -35,6 +41,10 @@ internal sealed class AppSession
     private readonly Dictionary<string, string> _icons = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _appNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _lightReadings = new();
+    private readonly Dictionary<string, LightObservation> _observations = new();
+    private readonly Dictionary<string, (int? Brightness, int? Kelvin, CancellationTokenSource Stop)> _edits = new();
+    private readonly List<Task> _editing = [];
+    internal Action? OpenSettings { get; set; }
     internal event Action? Changed;
     internal int Revision { get; private set; }
     internal bool Isolated { get; }
@@ -50,6 +60,14 @@ internal sealed class AppSession
     internal string LightAddress { get; set; } = "";
     internal string AppSearch { get; set; } = "";
     internal bool ShowAllApps { get; set; }
+    private readonly Dictionary<string, bool> _details = new();
+    internal bool DetailOpen(string key, bool initial) => _details.GetValueOrDefault(key, initial);
+    internal void SetDetailOpen(string key, bool value)
+    {
+        if (_details.TryGetValue(key, out var previous) && previous == value) return;
+        _details[key] = value;
+        Notify();
+    }
     internal int Page { get; set; }
     internal string PreviewCameraId { get; set; } = "";
     internal string PreviewDetail { get; private set; } = "Preview is stopped. It never records or uploads images.";
@@ -59,6 +77,46 @@ internal sealed class AppSession
     internal CameraDevice[] Cameras { get; private set; } = [];
     internal string? IconPath(string appKey) { lock (_gate) return _icons.GetValueOrDefault(appKey); }
     internal string LightReading(string id) { lock (_gate) return _lightReadings.GetValueOrDefault(id, "Not read yet."); }
+    internal LightObservation Observation(string id) { lock (_gate) return _observations.GetValueOrDefault(id, new(null, default)); }
+    internal bool IsManual(string id) => _automation.IsManual(id);
+    internal bool IsEditing(string id) { lock (_gate) return _edits.ContainsKey(id); }
+    internal string ActivityTitle
+    {
+        get
+        {
+            var settings = Preferences;
+            if (!settings.AutomationEnabled) return "Automation off";
+            if (Mode == ManualMode.Paused) return "Automation paused";
+            if (Mode == ManualMode.ForceOn) return "Manual on";
+            if (Mode == ManualMode.ForceOff) return "Manual off";
+            if (!settings.Apps.Any(a => a.Enabled)) return "Choose trigger apps";
+            lock (_gate)
+            {
+                if (_snapshot is not null && DateTimeOffset.UtcNow - _snapshot.Time < TimeSpan.FromSeconds(4) &&
+                    _snapshot.Apps.Any(app => app.Status == CameraStatus.Active &&
+                        settings.Apps.Any(a => a.Enabled && a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase))))
+                    return "Camera in use";
+                return _snapshot?.Healthy == true && DateTimeOffset.UtcNow - _snapshot.Time < TimeSpan.FromSeconds(4) ?
+                    "Ready for your next call" : "Camera state unknown";
+            }
+        }
+    }
+    internal string ActivityContext
+    {
+        get
+        {
+            var settings = Preferences;
+            if (!settings.Apps.Any(a => a.Enabled)) return "No selected apps will trigger lighting";
+            lock (_gate)
+            {
+                var active = _snapshot?.Apps.Where(a => a.Status == CameraStatus.Active &&
+                    settings.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))).Select(a => a.Name).ToArray() ?? [];
+                int count = settings.Apps.Count(a => a.Enabled);
+                return active.Length > 0 ? string.Join(", ", active) : $"{count} selected {(count == 1 ? "app" : "apps")} · " +
+                    (settings.CameraIds.Count == 0 ? "all cameras" : $"{settings.CameraIds.Count} selected {(settings.CameraIds.Count == 1 ? "camera" : "cameras")}");
+            }
+        }
+    }
     internal Settings Preferences { get { lock (_gate) return _settings with { Apps = [.. _settings.Apps], Lights = [.. _settings.Lights], CameraIds = [.. _settings.CameraIds] }; } }
     internal CameraApp[] Apps { get { lock (_gate) return _installedCameraApps.UnionBy(_catalog, a => a.Key, StringComparer.OrdinalIgnoreCase)
         .UnionBy(_snapshot?.Apps ?? [], a => a.Key, StringComparer.OrdinalIgnoreCase)
@@ -89,8 +147,8 @@ internal sealed class AppSession
         _settings.Validate();
         ActivationInput = _settings.ActivationMilliseconds.ToString();
         LeaveInput = _settings.LeaveMilliseconds.ToString();
-        ILightTransport transport = demo ? new DemoLights() : new ElgatoTransport();
-        _automation = new(transport, journal => storage.Save("ownership.json", journal, AppJson.Default.OwnershipJournal));
+        _transport = demo ? new DemoLights() : new ElgatoTransport();
+        _automation = new(_transport, journal => storage.Save("ownership.json", journal, AppJson.Default.OwnershipJournal));
         if (!demo) _automation.Recover(storage.Load("ownership.json", AppJson.Default.OwnershipJournal) ?? new([]));
         if (_automation.Owned.Count > 0) _decision.HoldRecoveredOwnership();
         // Isolated worktree launches must never inherit enabled automation from another run.
@@ -101,7 +159,9 @@ internal sealed class AppSession
             Interfaces = [new("demo", "Example LAN", "192.0.2.1", "255.255.255.0")];
             _settings.InterfaceId = "demo";
             _settings.Apps = [new("demo:meeting", "Example Meeting", true), new("demo:studio", "Example Studio", false)];
-            _settings.Lights = [new("demo:light", "Studio Key Light (simulated)", "192.0.2.10", 9123, "demo", true)];
+            _settings.Lights = [new("demo:light", "Key Light", "192.0.2.10", 9123, "demo", true) { ProductName = "Elgato Key Light" },
+                new("demo:air", "Key Light Air", "192.0.2.11", 9123, "demo", true) { ProductName = "Elgato Key Light Air" }];
+            Cameras = [new("demo:camera", "Example camera")];
             _catalog = [new("demo:meeting", "Example Meeting", CameraStatus.Unknown), new("demo:studio", "Example Studio", CameraStatus.Unknown)];
             SensorDetail = "Synthetic demo. No ETW, setup, startup registration, discovery or physical light writes.";
         }
@@ -126,8 +186,8 @@ internal sealed class AppSession
         {
             _monitor = Task.Run(() => MonitorSensorsAsync(_stop.Token));
             _appDetails = Task.Run(() => UpdateAppDetailsAsync(_stop.Token));
-            _lightMaintenance = Task.Run(() => MaintainLightsAsync(_stop.Token));
         }
+        _lightMaintenance = Task.Run(() => MaintainLightsAsync(_stop.Token));
         _loop = RunAsync(_stop.Token);
     }
     private async Task MonitorSensorsAsync(CancellationToken token)
@@ -204,7 +264,9 @@ internal sealed class AppSession
                         Post(() =>
                         {
                             Cameras = currentCameras;
-                            if (string.IsNullOrEmpty(PreviewCameraId)) PreviewCameraId = Cameras.FirstOrDefault()?.Id ?? "";
+                            if (string.IsNullOrEmpty(PreviewCameraId)) PreviewCameraId =
+                                Cameras.FirstOrDefault(c => Preferences.CameraIds.Contains(c.Id, StringComparer.OrdinalIgnoreCase))?.Id ??
+                                Cameras.FirstOrDefault()?.Id ?? "";
                             Notify();
                         });
                     }
@@ -350,11 +412,20 @@ internal sealed class AppSession
             do
             {
                 int failed = 0;
-                var lights = Preferences.Lights.Where(l => l.Enabled && !l.Tls).ToArray();
+                var lights = Preferences.Lights.Where(l => !l.Tls).ToArray();
                 await Parallel.ForEachAsync(lights, new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = token },
                     async (light, cancellation) =>
                     {
-                        try { await ReadLightAsync(light, cancellation); }
+                        try
+                        {
+                            await ReadLightAsync(light, cancellation);
+                            if (!Demo && light.ProductName is null)
+                            {
+                                var info = await new ElgatoTransport().IdentifyDetailsAsync(light, cancellation);
+                                Post(() => Change(s => s.Lights = s.Lights.Select(l => l.Id == light.Id ?
+                                    l with { ProductName = info.ProductName ?? "" } : l).ToList()));
+                            }
+                        }
                         catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
                             OperationCanceledException && !cancellation.IsCancellationRequested)
                         {
@@ -362,7 +433,7 @@ internal sealed class AppSession
                             Trace.WriteLine(ex);
                         }
                     });
-                if (failed > 0 && DateTimeOffset.UtcNow >= nextDiscovery)
+                if (!Demo && failed > 0 && DateTimeOffset.UtcNow >= nextDiscovery)
                 {
                     nextDiscovery = DateTimeOffset.UtcNow.AddSeconds(30);
                     try { await DiscoverAsync(); }
@@ -416,6 +487,7 @@ internal sealed class AppSession
         s.Apps.RemoveAll(a => a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase));
         s.Apps.Add(new(app.Key, app.Name, enabled));
     });
+    internal void ClearApps() => Change(s => s.Apps = s.Apps.Select(a => a with { Enabled = false }).ToList());
     internal void AddApp()
     {
         string path = AppPath.Trim().Trim('"');
@@ -437,6 +509,63 @@ internal sealed class AppSession
         s.InterfaceId = id;
         s.Lights = s.Lights.Select(light => light with { InterfaceId = id }).ToList();
     });
+    internal void AdjustLight(LightDevice light, int? brightness = null, int? kelvin = null)
+    {
+        CancellationTokenSource stop;
+        lock (_gate)
+        {
+            _edits.TryGetValue(light.Id, out var previous);
+            previous.Stop?.Cancel();
+            stop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+            _edits[light.Id] = (brightness ?? previous.Brightness, kelvin ?? previous.Kelvin, stop);
+            _editing.RemoveAll(task => task.IsCompleted);
+            _editing.Add(ApplyLightEditAsync(light, stop));
+        }
+        Notify();
+    }
+    private async Task ApplyLightEditAsync(LightDevice light, CancellationTokenSource stop)
+    {
+        try
+        {
+            await Task.Delay(250, stop.Token);
+            (int? Brightness, int? Kelvin, CancellationTokenSource Stop) edit;
+            lock (_gate) edit = _edits[light.Id];
+            var state = await AdjustAndReadAsync(light, null, edit.Brightness, edit.Kelvin, stop.Token);
+            RememberLight(light, state);
+            Post(Notify);
+        }
+        catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        catch (Exception ex) { Post(() => Report("Light adjustment failed: " + ex.Message)); }
+        finally
+        {
+            lock (_gate) if (_edits.TryGetValue(light.Id, out var current) && current.Stop == stop) _edits.Remove(light.Id);
+            stop.Dispose();
+            Post(Notify);
+        }
+    }
+    internal async Task ToggleLightAsync(LightDevice light)
+    {
+        var reading = Observation(light.Id);
+        if (!reading.Fresh) throw new IOException("This light has no fresh power reading. Test its connection before changing it.");
+        var state = await AdjustAndReadAsync(light, reading.State!.On == 1 ? 0 : 1, null, null, _stop.Token);
+        RememberLight(light, state);
+        Post(Notify);
+    }
+    private async Task<LightState> AdjustAndReadAsync(LightDevice light, int? on, int? brightness, int? kelvin, CancellationToken token)
+    {
+        try { return await _automation.AdjustAsync(light, on, brightness, kelvin, token); }
+        catch (Exception ex)
+        {
+            lock (_gate) _observations[light.Id] = Observation(light.Id) with { Error = ex.Message };
+            throw;
+        }
+    }
+    internal async Task ResumeLightAsync(LightDevice light)
+    {
+        lock (_gate) if (_edits.TryGetValue(light.Id, out var pending)) pending.Stop.Cancel();
+        await _automation.ResumeAsync(light.Id, _stop.Token);
+        Post(Notify);
+    }
     internal void RefreshInterfaces()
     {
         try { Interfaces = LanInterfaces.Get(); }
@@ -479,7 +608,11 @@ internal sealed class AppSession
             for (int i = 0; i < found.Length; i++)
             {
                 if (found[i].Tls) continue;
-                try { found[i] = found[i] with { Name = await transport.IdentifyAsync(found[i], _stop.Token) }; }
+                try
+                {
+                    var info = await transport.IdentifyDetailsAsync(found[i], _stop.Token);
+                    found[i] = found[i] with { Name = info.DisplayName ?? info.ProductName ?? found[i].Name, ProductName = info.ProductName };
+                }
                 catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
                     OperationCanceledException && !_stop.IsCancellationRequested)
                 {
@@ -525,9 +658,10 @@ internal sealed class AppSession
         var device = new LightDevice("manual:" + address, address, address, 9123, preferences.InterfaceId);
         LightEndpoint.Validate(device);
         var transport = new ElgatoTransport();
-        string name = await transport.IdentifyAsync(device, _stop.Token);
+        var info = await transport.IdentifyDetailsAsync(device, _stop.Token);
         await transport.ReadAsync(device, _stop.Token);
-        Post(() => Change(s => { s.Lights.RemoveAll(l => l.Id == device.Id); s.Lights.Add(device with { Name = name }); }));
+        Post(() => Change(s => { s.Lights.RemoveAll(l => l.Id == device.Id); s.Lights.Add(device with {
+            Name = info.DisplayName ?? info.ProductName ?? device.Name, ProductName = info.ProductName }); }));
     }
     internal async Task TestLightAsync(LightDevice device)
     {
@@ -537,19 +671,37 @@ internal sealed class AppSession
     }
     private async Task<LightState> ReadLightAsync(LightDevice device, CancellationToken token)
     {
+        var started = DateTimeOffset.UtcNow;
         try
         {
-            var state = await new ElgatoTransport().ReadAsync(device, token);
-            lock (_gate) _lightReadings[device.Id] = $"{(state.On == 1 ? "ON" : "OFF")} - brightness {state.Brightness}% - temperature {state.Temperature} (device readback)";
+            var state = await _transport.ReadAsync(device, token);
+            RememberLight(device, state, started);
             Post(Notify);
             return state;
         }
         catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
             OperationCanceledException && !token.IsCancellationRequested)
         {
-            lock (_gate) _lightReadings[device.Id] = "Readback failed: " + ex.Message;
+            lock (_gate)
+            {
+                if (!_observations.TryGetValue(device.Id, out var latest) || latest.Time <= started)
+                {
+                    _lightReadings[device.Id] = "Readback failed: " + ex.Message;
+                    _observations[device.Id] = Observation(device.Id) with { Error = ex.Message };
+                }
+            }
             Post(Notify);
             throw;
+        }
+    }
+    private void RememberLight(LightDevice device, LightState state, DateTimeOffset? time = null)
+    {
+        lock (_gate)
+        {
+            var observedAt = time ?? DateTimeOffset.UtcNow;
+            if (_observations.TryGetValue(device.Id, out var previous) && previous.Time > observedAt) return;
+            _observations[device.Id] = new(state, observedAt);
+            _lightReadings[device.Id] = $"{(state.On == 1 ? "ON" : "OFF")} - brightness {state.Brightness}% - temperature {state.Temperature} (device readback)";
         }
     }
     internal void SetStartup(bool enabled)
@@ -592,7 +744,7 @@ internal sealed class AppSession
         try { await StopPreviewAsync(); }
         catch (Exception ex) { failures.Add(ex); }
         try { await Task.WhenAll(_loop ?? Task.CompletedTask, _monitor ?? Task.CompletedTask,
-            _appDetails ?? Task.CompletedTask, _lightMaintenance ?? Task.CompletedTask); }
+            _appDetails ?? Task.CompletedTask, _lightMaintenance ?? Task.CompletedTask, Task.WhenAll(_editing.ToArray())); }
         catch (Exception ex) { failures.Add(ex); }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         try { await _automation.ReconcileAsync(false, Preferences.Lights, timeout.Token); }
@@ -601,9 +753,10 @@ internal sealed class AppSession
     }
     private sealed class DemoLights : ILightTransport
     {
-        private LightState _state = new(0, 40, 250);
-        public Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken) => Task.FromResult(_state);
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, LightState> _states = new();
+        public Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken) =>
+            Task.FromResult(_states.GetOrAdd(device.Id, new LightState(0, 26, 205)));
         public Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken)
-        { _state = state; return Task.CompletedTask; }
+        { _states[device.Id] = state; return Task.CompletedTask; }
     }
 }

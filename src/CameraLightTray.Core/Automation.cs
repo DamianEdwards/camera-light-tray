@@ -75,8 +75,10 @@ public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJ
     private readonly Dictionary<string, Attempt> _attempts = [];
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
     private bool _dirty;
+    private bool _wasDesired;
     private sealed record Attempt(LightDevice Device, bool Desired, int Failures, DateTimeOffset Next, string Error);
     public IReadOnlyCollection<OwnedLight> Owned { get { lock (_gate) return _owned.Values.ToArray(); } }
+    public bool IsManual(string id) { lock (_gate) return _suppressed.Contains(id); }
     public string Status { get; private set; } = "Automation is off.";
     public void Recover(OwnershipJournal journal)
     {
@@ -108,6 +110,45 @@ public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJ
         finally { _reconcile.Release(); }
     }
 
+    public async Task<LightState> AdjustAsync(LightDevice device, int? on, int? brightness, int? kelvin, CancellationToken token)
+    {
+        await _reconcile.WaitAsync(token);
+        try
+        {
+            lock (_gate) if (_dirty) Save();
+            var current = await transport.ReadAsync(device, token);
+            var next = LightControls.Adjust(current, on, brightness, kelvin);
+            lock (_gate) _suppressed.Add(device.Id);
+            // Keep the old ownership intent until a write is acknowledged. A lost
+            // acknowledgment is resolved by readback, never by fighting the edit.
+            if (next != current) await transport.WriteAsync(device, next, token);
+            Release(device.Id, true);
+            lock (_gate) _attempts.Remove(device.Id);
+            Status = "Manual light adjustment. Resume auto to return control.";
+            var observed = await transport.ReadAsync(device, token);
+            if (observed != next) throw new IOException("The light's readback does not match the requested adjustment.");
+            return observed;
+        }
+        finally { _reconcile.Release(); }
+    }
+
+    public async Task ResumeAsync(string id, CancellationToken token)
+    {
+        await _reconcile.WaitAsync(token);
+        try
+        {
+            lock (_gate)
+            {
+                if (_dirty) Save();
+                // An explicit resume starts a new baseline from the current state.
+                if (_owned.ContainsKey(id)) Release(id, false);
+                _suppressed.Remove(id);
+                _attempts.Remove(id);
+            }
+        }
+        finally { _reconcile.Release(); }
+    }
+
     private async Task ReconcileDevicesAsync(bool desired, IEnumerable<LightDevice> devices, CancellationToken token)
     {
         var failures = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
@@ -116,7 +157,8 @@ public sealed class LightAutomation(ILightTransport transport, Action<OwnershipJ
         lock (_gate)
         {
             if (_dirty) Save();
-            if (!desired) _suppressed.Clear();
+            if (!desired && _wasDesired) _suppressed.Clear();
+            _wasDesired = desired;
             ids = _owned.Keys.Union(configured.Values.Where(d => desired && d.Enabled && !d.Tls).Select(d => d.Id)).ToArray();
             foreach (string id in _attempts.Keys.Except(ids).ToArray()) _attempts.Remove(id);
         }

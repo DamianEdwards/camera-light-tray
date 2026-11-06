@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="180" viewBox="0 0 160 180">
+  <title>Key Light Air</title>
+  <path d="m39 157 73-5 13 15q2 6-5 7l-85 1q-7-1-4-7Z" fill="#34414b" stroke="#8b98a2" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M39 168h75" stroke="#b5c1c9" stroke-opacity=".4" stroke-width="1"/>
+  <path d="M85 101v59" stroke="#303a43" stroke-width="8"/>
+  <path d="M83 113v39" stroke="#8d9aa5" stroke-width="2"/>
+  <rect x="79" y="132" width="12" height="7" rx="2" fill="#54626d"/>
+  <circle cx="85" cy="105" r="6" fill="#86939d"/>
+  <path d="m85 103-5-7" stroke="#56636e" stroke-width="5"/>
+  <rect x="38" y="13" width="84" height="84" rx="12" fill="#343d45" stroke="#8c99a3" stroke-width="2"/>
+  <rect id="panel" x="44" y="19" width="72" height="72" rx="8" fill="#fff0cb"/>
+  <path d="M51 23h58" stroke="#fff" stroke-opacity=".25" stroke-width="2" stroke-linecap="round"/>
+  <path d="M41 34v43" stroke="#afbbc5" stroke-opacity=".5" stroke-width="1"/>
+</svg>

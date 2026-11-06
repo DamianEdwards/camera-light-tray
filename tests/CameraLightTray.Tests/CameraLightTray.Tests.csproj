@@ -11,5 +11,6 @@
     <Compile Include="..\..\src\CameraLightTray.App\Platform\SensorMonitorRecovery.cs" Link="SensorMonitorRecovery.cs" />
     <Compile Include="..\..\src\CameraLightTray.App\Platform\SensorActivityMonitor.cs" Link="SensorActivityMonitor.cs" />
     <Compile Include="..\..\src\CameraLightTray.Monitor\ProcessCatalog.cs" Link="ProcessCatalog.cs" />
+    <Compile Include="..\..\src\CameraLightTray.App\Native\FlyoutPlacement.cs" Link="FlyoutPlacement.cs" />
   </ItemGroup>
 </Project>

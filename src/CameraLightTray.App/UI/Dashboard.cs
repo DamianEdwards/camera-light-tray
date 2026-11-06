@@ -6,163 +6,188 @@ using static Microsoft.UI.Reactor.Factories;
 
 namespace CameraLightTray.App.UI;
 
+// Studio: the equipment is the daily control surface; setup lives in one quiet
+// navigation rail. Power and automation remain separate, including uncertainty.
 internal sealed class Dashboard(AppSession session) : Component
 {
-    private static Element Copy(string text) => TextBlock(text).TextWrapping().FontSize(13).AutomationName(text);
-    private static Element Scroll(Element child) => ScrollViewer(child).Set(element =>
-    {
-        var viewer = (Microsoft.UI.Xaml.Controls.ScrollViewer)element;
-        viewer.HorizontalScrollMode = Microsoft.UI.Xaml.Controls.ScrollMode.Disabled;
-        viewer.HorizontalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Disabled;
-        viewer.VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Auto;
-    });
+    private static TextBlockElement Copy(string text, double size = 13) =>
+        TextBlock(text).FontSize(size).TextWrapping().AutomationName(text);
+    private static Element Description(string text) => Copy(text).Opacity(0.8);
+    private static Element Rule() => Border(null).Height(1).Background(StudioStyle.Color("#D8E0E6"));
+    private static Element Heading(string title, string description) =>
+        VStack(8, Copy(title, 26).SemiBold(), Description(description)).Margin(bottom: 24);
+    private Element Detail(string title, Element content, bool expanded = false) =>
+        Expander(title, content, session.DetailOpen(title, expanded), open => session.SetDetailOpen(title, open))
+            .AutomationId("Detail:" + title).HorizontalContentAlignment(HorizontalAlignment.Stretch).HAlign(HorizontalAlignment.Stretch).Margin(top: 18);
+    private static Element Row(Element content, Element action) => VStack(0,
+        StudioStyle.Split(content, action).Padding(0, 16), Rule());
+    private static CheckBoxElement Selection(bool selected, Action<bool> changed, string name) =>
+        CheckBox(selected, changed, "").MinWidth(44).Width(44).MinHeight(44).Height(44).Padding(12, 0, 0, 0).AutomationName(name);
+    private void Navigate(int page) { session.Page = page; session.Notify(); }
+
     public override Element Render()
     {
-        var (_, setRevision) = UseState(session.Revision);
+        var (_, update) = UseState(session.Revision);
         UseEffect(() =>
         {
-            void Changed() => setRevision(session.Revision);
+            void Changed() => update(session.Revision);
             session.Changed += Changed;
             return () => session.Changed -= Changed;
         }, session);
-        var preferences = session.Preferences;
-        var interfaces = session.Interfaces;
+        var names = new[] { "Automation", "Apps", "Cameras", "Lights", "General" };
+        var glyphs = new[] { "\uE80F", "\uE71D", "\uE714", "\uE781", "\uE713" };
+        return Grid([GridSize.Px(180), GridSize.Star()], [GridSize.Star()], [
+            VStack(6, names.Select((name, index) => (Element)Button(HStack(12, StudioStyle.Glyph(glyphs[index]), Copy(name)),
+                () => Navigate(index)).HorizontalContentAlignment(HorizontalAlignment.Left).HAlign(HorizontalAlignment.Stretch).Padding(12, 10)
+                .Background(StudioStyle.Color(session.Page == index ? "#DFE9F1" : "Transparent", true)).BorderThickness(0)
+                .AutomationName(name).WithKey(name).AutomationId(index == 0 ? "OpenRules" : index == 4 ? "OpenGeneral" : "Open" + name)).ToArray())
+                .Padding(12, 24).Background(StudioStyle.Color("#F0F3F6", true)).Grid(),
+            ScrollViewer(VStack(12,
+                session.Demo ? InfoBar("Synthetic demo", "Example camera and lights only; no hardware access.").Informational().IsClosable(false) :
+                    session.Isolated ? InfoBar("Isolated run", "Separate preferences; machine setup and startup are disabled.").Informational().IsClosable(false) : null,
+                !string.IsNullOrEmpty(session.Error) ? InfoBar("Action failed", session.Error).Error().IsClosable(true).Closed(() => session.Report("")) : null,
+                !string.IsNullOrEmpty(session.Notice) ? Description(session.Notice) : null,
+                session.Page switch { 1 => Apps(), 2 => Cameras(), 3 => Lights(), 4 => General(), _ => Automation() }
+            ).Padding(32, 28)).Grid(column: 1)
+        ]).Background(StudioStyle.Color("#FBFCFD", true))
+            .Set(element => ((FrameworkElement)element).RequestedTheme = ElementTheme.Light).AutomationId("Dashboard");
+    }
+
+    private Element Apps()
+    {
+        var settings = session.Preferences;
         var apps = session.Apps.Where(a => string.IsNullOrWhiteSpace(session.AppSearch) ||
             a.Name.Contains(session.AppSearch, StringComparison.OrdinalIgnoreCase) ||
             a.Key.Contains(session.AppSearch, StringComparison.OrdinalIgnoreCase))
             .Where(a => session.ShowAllApps || !string.IsNullOrWhiteSpace(session.AppSearch) || session.Suggested(a)).ToArray();
+        int selected = settings.Apps.Count(a => a.Enabled);
+        return VStack(12,
+            Heading("Apps that trigger your lights", "Only selected apps can turn on your lights. They stay on while any selected app uses a monitored camera."),
+            Border(VStack(4, Copy(selected == 0 ? "Select an app to start" : $"{selected} {(selected == 1 ? "app" : "apps")} selected").SemiBold(),
+                Description(selected == 0 ? "No selection means no automatic activation—not every app." :
+                    "Other apps can use the camera without triggering lighting."))).Padding(14).Background(StudioStyle.Color("#EDF5FA", true)).CornerRadius(6),
+            TextBox(session.AppSearch, value => { session.AppSearch = value; session.Notify(); }, "Search apps")
+                .AutomationName("Search apps").AutomationId("AppSearch"),
+            Rule(),
+            VStack(0, apps.Select(app => Row(
+                HStack(12, session.IconPath(app.Key) is { } path ? Image(path).Width(30).Height(30).AccessibilityHidden() :
+                    StudioStyle.Glyph("\uE71D", 24).Width(30).AccessibilityHidden(),
+                    VStack(4, Copy(app.Name).SemiBold(), Description(app.Status == CameraStatus.Active ? "Camera in use" :
+                        app.Status == CameraStatus.Unknown ? "Camera state unknown" : "Not using a monitored camera"))),
+                Selection(settings.Apps.Any(a => a.Enabled && a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)),
+                    value => session.SelectApp(app, value), "Trigger lights for " + app.Name)).WithKey(app.Key)).ToArray()),
+            apps.Length == 0 ? Description("No matching apps. Try another search or add an executable below.") : null,
+            StudioStyle.Split(Button(session.ShowAllApps ? "Show suggested apps" : "Show all running apps",
+                () => { session.ShowAllApps = !session.ShowAllApps; session.Notify(); }).AutomationName("Show or hide all running apps").Background(StudioStyle.Color("Transparent", true)).BorderThickness(0),
+                Button("Clear selection", session.ClearApps).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0)),
+            Detail("Add an app by executable path", VStack(10,
+                TextBox(session.AppPath, value => session.AppPath = value, "Full path to an .exe").AutomationName("Executable path").AutomationId("AppPath"),
+                Button("Add executable", session.AddApp).AutomationId("AddApp"))),
+            Detail("How suggestions and identities work", VStack(10,
+                Description("Selected apps, active clients, webcam-capable installed packages and communication apps appear first. Suggestions never grant permission or select apps."),
+                VStack(8, settings.Apps.Where(a => a.Enabled).Select(a => Copy(a.Name + "\n" + a.Key, 11).WithKey(a.Key)).ToArray())))
+        );
+    }
+
+    private Element Cameras()
+    {
+        var settings = session.Preferences;
         var cameras = session.Cameras;
-        var header = VStack(6,
-                TextBlock("Camera Light Tray").FontSize(28).SemiBold(),
-                Copy("Camera-triggered Elgato lighting - initial spike"),
-                session.Isolated ? InfoBar("Isolated run", "Separate preferences; setup and login startup are disabled. Automation starts off.")
-                    .Informational().IsClosable(false) : null,
-                session.Demo ? InfoBar("Synthetic demo", "All camera and light state is simulated. No hardware writes or machine setup.")
-                    .Success().IsClosable(false) : null);
-        var automation = Card(VStack(10,
-                TextBlock("Automation").FontSize(20).SemiBold(),
-                ToggleSwitch(preferences.AutomationEnabled, session.Enable)
-                    .AutomationName("Enable physical light automation").AutomationId("AutomationEnabled"),
-                Copy(preferences.AutomationEnabled ? "Enabled. Only selected apps and lights participate." :
-                    "Off. Enabling this permits changes to selected physical lights."),
-                ComboBox(["Automatic", "Paused (restore owned lights)", "Manual on", "Manual off (restore previous state)"],
-                    (int)session.Mode, i => session.SetMode((ManualMode)i))
-                    .AutomationName("Automation override").AutomationId("Override"),
-                Copy(session.AutomationDetail).AutomationId("AutomationStatus"),
-                Copy("Selected apps: " + string.Join("; ", session.Apps.Where(a => preferences.Apps.Any(p =>
-                    p.Enabled && p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))).Select(a => $"{a.Name}: {a.Status}")))));
-        var cameraSettings = Card(VStack(12,
-                TextBlock("Camera monitor").FontSize(20).SemiBold(),
-                Copy(session.SensorDetail).AutomationId("SensorStatus"),
-                Copy("Windows sensor activity reports identify streaming clients and cameras without elevation. Monitoring does not open a camera. Unknown holds automation; it is not treated as off."),
-                Copy(preferences.CameraIds.Count == 0 ? "Trigger cameras: all." : $"Trigger cameras: {preferences.CameraIds.Count} selected. Uncheck the last selection to monitor all."),
-                VStack(4, cameras.Select(camera => (Element)CheckBox(
-                    preferences.CameraIds.Contains(camera.Id, StringComparer.OrdinalIgnoreCase),
-                    enabled => session.SelectCamera(camera, enabled == true), camera.Name)
-                    .AutomationName("Trigger on " + camera.Name)).ToArray()),
-                preferences.CameraIds.Any(id => !cameras.Any(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) ?
-                    Copy("A saved trigger camera is unavailable. Select 'Monitor all cameras' to clear the filter.") : null,
-                Button("Monitor all cameras", session.MonitorAllCameras).IsEnabled(preferences.CameraIds.Count > 0),
-                Copy("App selections and camera filters are independent. The preview selector alone does not change trigger cameras.")));
-        var preview = !session.Demo ? Card(VStack(8,
-                TextBlock("Local camera preview").FontSize(20).SemiBold(),
+        return VStack(12,
+            Heading("Trigger cameras", "Lighting follows selected apps using these cameras. The preview camera is a separate choice."),
+            Row(VStack(4, Copy("All cameras").SemiBold(), Description("Any camera used by a selected app")),
+                Selection(settings.CameraIds.Count == 0, enabled =>
+                {
+                    if (enabled) session.MonitorAllCameras();
+                    else if (cameras.Length > 0) session.SelectCamera(cameras[0], true);
+                }, "Monitor all cameras")),
+            VStack(0, cameras.Select(camera => Row(HStack(12, StudioStyle.Glyph("\uE714"),
+                Copy(camera.Name)), Selection(settings.CameraIds.Count == 0 || settings.CameraIds.Contains(camera.Id, StringComparer.OrdinalIgnoreCase),
+                    enabled => session.SelectCamera(camera, enabled), "Trigger on " + camera.Name).IsEnabled(settings.CameraIds.Count > 0)).WithKey(camera.Id)).ToArray()),
+            settings.CameraIds.Any(id => !cameras.Any(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) ?
+                InfoBar("Saved camera unavailable", "Choose an available camera or monitor all cameras.").Warning().IsClosable(false) : null,
+            !session.Demo ? Detail("Local camera preview", VStack(12,
+                Description("Select Camera Light Tray under Apps if you want this preview to trigger lighting. No recording."),
                 ComboBox(cameras.Select(c => c.Name).ToArray(), Array.FindIndex(cameras, c => c.Id == session.PreviewCameraId),
                     index => { if (index >= 0 && index < cameras.Length) { session.PreviewCameraId = cameras[index].Id; session.Notify(); } })
-                    .AutomationName("Preview camera").IsEnabled(!session.Busy),
-                HStack(8, Button("Start preview", () => session.Run(session.StartPreviewAsync)).IsEnabled(!session.Busy && cameras.Length > 0),
-                    Button("Stop preview", () => session.Run(session.StopPreviewAsync)).IsEnabled(!session.Busy)),
-                MediaPlayerElement(null).Height(220).OnMount(element => session.AttachPreview((Microsoft.UI.Xaml.Controls.MediaPlayerElement)element))
+                    .AutomationName("Preview camera"),
+                HStack(8, Button("Start preview", () => session.Run(session.StartPreviewAsync)).IsEnabled(!session.Busy && cameras.Length > 0).AutomationId("StartPreview"),
+                    Button("Stop preview", () => session.Run(session.StopPreviewAsync)).IsEnabled(!session.Busy).AutomationId("StopPreview")),
+                MediaPlayerElement(null).Height(240).OnMount(element => session.AttachPreview((Microsoft.UI.Xaml.Controls.MediaPlayerElement)element))
                     .OnUnmount(_ => session.HidePreview()),
-                Copy(session.PreviewDetail).AutomationId("PreviewStatus"),
-                Copy("Automation: " + session.AutomationDetail),
-                VStack(4, preferences.Lights.Where(l => l.Enabled).Select(l => (Element)Copy(l.Name + ": " + session.LightReading(l.Id))).ToArray())
-            )) : null;
-        var appSettings = Card(VStack(12,
-                TextBlock("Apps").FontSize(20).SemiBold(),
-                Copy("Select any number of apps. Lights remain on while any selected app is active. Running apps appear automatically; saved selections remain listed."),
-                TextBox(session.AppSearch, value => { session.AppSearch = value; session.Notify(); }, "Filter apps")
-                    .AutomationName("Filter apps").AutomationId("AppSearch"),
-                ToggleSwitch(session.ShowAllApps, value => { session.ShowAllApps = value; session.Notify(); })
-                    .AutomationName("Show all running apps"),
-                Copy("Suggested first: saved selections, active cameras, installed packages declaring webcam access, and known communications apps. Suggestions do not grant permission or select apps automatically."),
-                Scroll(VStack(8, apps.Select(app =>
-                    (Element)HStack(12,
-                        session.IconPath(app.Key) is { } icon ? Image(icon).Width(32).Height(32).AccessibilityHidden() :
-                            Icon(FontIcon("\uE71D", "Segoe Fluent Icons", 22)).Width(32).Height(32),
-                        VStack(3,
-                            CheckBox(preferences.Apps.Any(a => a.Enabled && a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)),
-                                value => session.SelectApp(app, value == true), app.Name)
-                                .AutomationName("Monitor " + app.Name),
-                            Copy($"{app.Status} - {app.Key}").FontSize(11)))).ToArray())).Height(280),
-                apps.Length == 0 ? Copy("No matching running apps. Launch an app or add an executable.") : null,
-                TextBox(session.AppPath, value => session.AppPath = value, "Full executable path")
-                    .AutomationName("Executable path").AutomationId("AppPath"),
-                Button("Add executable", session.AddApp).AutomationId("AddApp"),
-                Copy("Packaged apps are identified by package family + executable (stable across package updates); desktop apps by full executable path.")));
-        var lightSettings = Card(VStack(12,
-                TextBlock("LAN and lights").FontSize(20).SemiBold(),
-                Copy("Choose the physical LAN interface. Discovery and HTTP requests bind to it explicitly; no VPN route changes are made."),
-                ComboBox(interfaces.Select(i => $"{i.Name} - {i.Address}").ToArray(),
-                    Array.FindIndex(interfaces, i => i.InterfaceId == preferences.InterfaceId),
-                    index => { if (index >= 0 && index < interfaces.Length) session.SelectInterface(interfaces[index].InterfaceId); })
-                    .AutomationName("LAN interface").AutomationId("LanInterface").IsEnabled(!session.Demo),
-                HStack(8, Button("Refresh interfaces", session.RefreshInterfaces).IsEnabled(!session.Demo),
-                    Button("Discover lights", () => session.Run(session.DiscoverAsync)).IsEnabled(!session.Busy && !session.Demo)),
-                !string.IsNullOrEmpty(session.DiscoveryDetail) ?
-                    Copy(session.DiscoveryDetail).AutomationId("DiscoveryStatus") : null,
-                VStack(10, preferences.Lights.Select(light => (Element)VStack(4,
-                    CheckBox(light.Enabled, value => session.SelectLight(light, value == true), light.Name)
-                        .IsEnabled(!light.Tls).AutomationName("Automate " + light.Name),
-                    Copy(light.Tls ? "Unsupported TLS model; no requests will be made." :
-                        $"{light.Host}:{light.Port} - bound to {light.InterfaceId}").FontSize(11),
-                    Copy(session.LightReading(light.Id)),
-                    Button("Test connection (read only)", () => session.Run(() => session.TestLightAsync(light)))
-                        .IsEnabled(!session.Busy && !light.Tls))).ToArray()),
-                TextBox(session.LightAddress, value => session.LightAddress = value, "Manual light IPv4 address (port 9123)")
-                    .AutomationName("Light IPv4 address").IsEnabled(!session.Demo),
-                Button("Add light (read-only probe)", () => session.Run(session.AddLightAsync)).IsEnabled(!session.Busy && !session.Demo),
-                Copy("Classic Key Light / Key Light Air HTTP models only. New TLS models are reported as unsupported. New lights are disabled until selected.")));
-        var rules = Card(VStack(12,
-                TextBlock("Lighting rules").FontSize(20).SemiBold(),
-                Copy("Activation debounce (milliseconds, 100-10000)"),
-                TextBox(session.ActivationInput, value => session.ActivationInput = value).AutomationName("Activation debounce").AutomationId("ActivationDelay"),
-                Copy("Leave grace (milliseconds, 500-60000)"),
-                TextBox(session.LeaveInput, value => session.LeaveInput = value).AutomationName("Leave grace").AutomationId("LeaveDelay"),
-                Button("Save rules", session.SaveRules).AutomationId("SaveRules"),
-                ToggleSwitch(preferences.StartAtLogin, session.SetStartup).AutomationName("Start at login")
-                    .IsEnabled(!session.Isolated && !session.Demo),
-                Copy("Closing this window hides it in the tray and stops preview. Right-click the tray icon to pause or exit."),
-                Copy("External light changes relinquish ownership until the activation ends. Manual off restores only our changes, never lights that were already on.")));
-        var legacy = Card(VStack(8,
-                TextBlock("Legacy ETW helper (optional)").SemiBold(),
-                Copy("The normal-user Windows sensor monitor above does not need this service. The experimental capture-engine ETW helper is retained for diagnostic/integration work; it does not cover every camera API and is not the active UI source."),
-                Button("Set up / repair legacy helper (administrator)", () => session.Run(session.SetupAsync))
-                    .AutomationId("SetupMonitor").IsEnabled(!session.Busy && !session.Isolated && !session.Demo),
-                Copy("Explicit setup installs protected files and a LocalService service. It never runs automatically at login.")));
-        var demoControls = session.Demo ? Card(VStack(8,
-                TextBlock("Synthetic camera controls").SemiBold(),
-                HStack(8, Button("Start demo camera", () => session.DemoCapture(true)).AutomationId("DemoStart"),
-                    Button("Stop demo camera", () => session.DemoCapture(false)).AutomationId("DemoStop")))) : null;
-        void Navigate(int page) { session.Page = page; session.Notify(); }
-        return Scroll(VStack(12,
-            header,
-            HStack(6, Button("Overview", () => Navigate(0)).IsEnabled(session.Page != 0).AutomationId("OpenOverview"),
-                Button("Apps", () => Navigate(1)).IsEnabled(session.Page != 1),
-                Button("Cameras", () => Navigate(2)).IsEnabled(session.Page != 2),
-                Button("Lights", () => Navigate(3)).IsEnabled(session.Page != 3),
-                Button("Rules / helper", () => Navigate(4)).IsEnabled(session.Page != 4).AutomationId("OpenRules")),
-            VStack(4,
-                !string.IsNullOrEmpty(session.Error) ? InfoBar("Action failed", session.Error).Error().IsClosable(false) : null,
-                !string.IsNullOrEmpty(session.Notice) ? Copy(session.Notice).AutomationId("Notice") : null),
-            session.Page switch
-            {
-                1 => appSettings,
-                2 => cameraSettings,
-                3 => lightSettings,
-                4 => VStack(12, rules, legacy),
-                _ => VStack(12, automation, Copy(session.SensorDetail).AutomationId("OverviewSensorStatus"), preview, demoControls)
-            },
-            Copy("No telemetry, audio, image or ETL recording. Explicit preview stays local and stops when the window closes; background monitoring uses metadata only.")
-        ).Padding(24)).AutomationId("Dashboard");
+                Copy(session.PreviewDetail, 11).AutomationId("PreviewStatus"))) : null,
+            Detail("Monitor details", VStack(10, Copy(session.SensorDetail, 12).AutomationId("SensorStatus"),
+                Description("Unknown holds owned lights rather than guessing the camera is off. Normal monitoring does not require helper installation.")))
+        );
     }
+
+    private Element Lights()
+    {
+        var settings = session.Preferences;
+        var interfaces = session.Interfaces;
+        return VStack(12,
+            Heading("Your lights", "Choose which lights follow your camera. New lights are never enabled automatically."),
+            Row(VStack(4, Copy("Connection").SemiBold(), Description("Discovery and control use this LAN interface.")),
+                ComboBox(interfaces.Select(i => i.Name).ToArray(), Array.FindIndex(interfaces, i => i.InterfaceId == settings.InterfaceId),
+                    index => { if (index >= 0 && index < interfaces.Length) session.SelectInterface(interfaces[index].InterfaceId); })
+                    .Width(170).AutomationName("LAN interface").AutomationId("LanInterface").IsEnabled(!session.Demo)),
+            HStack(8, Button("Discover lights", () => session.Run(session.DiscoverAsync)).IsEnabled(!session.Demo && !session.Busy),
+                Button("Refresh interfaces", session.RefreshInterfaces).IsEnabled(!session.Demo)),
+            !string.IsNullOrEmpty(session.DiscoveryDetail) ? Copy(session.DiscoveryDetail, 12).AutomationId("DiscoveryStatus") : null,
+            settings.Lights.Count == 0 ? Description("No lights yet. Discover them on your LAN, then select the ones you want.") : null,
+            VStack(0, settings.Lights.Select(light => Row(HStack(12, StudioStyle.Art(light, session.Observation(light.Id)),
+                VStack(5, Copy(light.Name).SemiBold(), Description(light.Tls ? "TLS model · unsupported" :
+                    session.Observation(light.Id).Fresh ? "Connected" : "Power unknown · reconnecting"))),
+                CheckBox(light.Enabled, value => session.SelectLight(light, value), "Auto").IsEnabled(!light.Tls)
+                    .AutomationName("Automate " + light.Name)).WithKey(light.Id)).ToArray()),
+            Detail("Connection details", VStack(12,
+                Description("Requests bind to the selected LAN. VPN routes are never changed."),
+                VStack(10, settings.Lights.Select(light => VStack(5, Copy($"{light.Name}\n{light.Host}:{light.Port}", 12),
+                    Copy(session.LightReading(light.Id), 11),
+                    Button("Test connection", () => session.Run(() => session.TestLightAsync(light))).IsEnabled(!session.Busy && !light.Tls)).WithKey(light.Id)).ToArray()))),
+            Detail("Add a known address", VStack(10,
+                TextBox(session.LightAddress, value => session.LightAddress = value, "Light IPv4 address").AutomationName("Light IPv4 address"),
+                Button("Add light", () => session.Run(session.AddLightAsync)).IsEnabled(!session.Demo && !session.Busy)))
+        );
+    }
+
+    private Element Automation()
+    {
+        var settings = session.Preferences;
+        return VStack(12,
+            Heading("Lighting, on cue", "Set up your triggers once. Then get back to your meeting."),
+            Row(VStack(4, Copy(settings.Apps.Any(a => a.Enabled) ? $"{settings.Apps.Count(a => a.Enabled)} trigger {(settings.Apps.Count(a => a.Enabled) == 1 ? "app" : "apps")} selected" : "Choose trigger apps").SemiBold(),
+                Description("Only selected apps can activate lights")), Button("Edit", () => Navigate(1))),
+            Row(VStack(4, Copy(settings.CameraIds.Count == 0 ? "All cameras" : $"{settings.CameraIds.Count} trigger {(settings.CameraIds.Count == 1 ? "camera" : "cameras")}").SemiBold(),
+                Description("Camera filters are independent of app selection")), Button("Edit", () => Navigate(2))),
+            Row(VStack(4, Copy($"{settings.Lights.Count(l => l.Enabled && !l.Tls)} lights set to auto").SemiBold(),
+                Description("Previous light states are preserved")), Button("Edit", () => Navigate(3))),
+            Row(VStack(4, Copy("Enable automation").SemiBold(), Description("No selected apps means no automatic activation.")),
+                ToggleSwitch(settings.AutomationEnabled, session.Enable).AutomationName("Enable automation").AutomationId("AutomationEnabled")),
+            Row(VStack(4, Copy("Ignore brief camera checks").SemiBold(), Description("Delay before turning lights on, in milliseconds.")),
+                TextBox(session.ActivationInput, value => session.ActivationInput = value).Width(100).AutomationName("Activation debounce").AutomationId("ActivationDelay")),
+            Row(VStack(4, Copy("Keep lights on after capture stops").SemiBold(), Description("Leave grace, in milliseconds.")),
+                TextBox(session.LeaveInput, value => session.LeaveInput = value).Width(100).AutomationName("Leave grace").AutomationId("LeaveDelay")),
+            Button("Save timing", session.SaveRules).AutomationId("SaveRules"),
+            Row(Copy("Override"), ComboBox(["Automatic", "Paused", "Manual on", "Manual off"], (int)session.Mode, index => session.SetMode((ManualMode)index)).AutomationName("Automation override")),
+            Copy(session.ActivityTitle).SemiBold().AutomationId("AutomationStatus"),
+            Detail("Monitor and restoration details", VStack(10, Copy(session.SensorDetail, 12),
+                Copy(session.AutomationDetail, 12),
+                Description("Unknown camera state keeps owned lights unchanged. Manual edits give that light control until you resume auto or the activation ends."))),
+            session.Demo ? HStack(8, Button("Start demo camera", () => session.DemoCapture(true)).AutomationId("DemoStart"),
+                Button("Stop demo camera", () => session.DemoCapture(false)).AutomationId("DemoStop")) : null
+        );
+    }
+
+    private Element General() => VStack(12,
+        Heading("General", "A small utility, out of your way."),
+        Row(VStack(4, Copy("Start at sign-in").SemiBold(), Description("Start quietly in the tray. No administrator prompt.")),
+            ToggleSwitch(session.Preferences.StartAtLogin, session.SetStartup).AutomationName("Start at sign-in").IsEnabled(!session.Isolated && !session.Demo)),
+        Row(VStack(4, Copy("When the window closes").SemiBold(), Description("Stay in the tray. Camera preview stops.")), Copy("Keep running", 12)),
+        Detail("Privacy", Description("Background monitoring reads camera activity metadata. Explicit preview stays local and never records or uploads frames. The application sends no telemetry.")),
+        Detail("Experimental tools", VStack(10,
+            Description("The legacy ETW helper is for diagnostics, not a prerequisite for normal monitoring."),
+            Button("Set up / repair legacy helper", () => session.Run(session.SetupAsync)).AutomationId("SetupMonitor")
+                .IsEnabled(!session.Busy && !session.Isolated && !session.Demo)), session.Demo)
+    );
 }

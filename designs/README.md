@@ -1,5 +1,10 @@
 # Tray-first design exploration
 
+**Studio was selected for native implementation on November 6.** Compact and
+Gallery remain archived alternatives. The native application now implements
+Studio's tray-first interaction and paired settings flow, with refined
+product art and real manual controls; this browser artifact remains a simulation.
+
 Open `index.html` in a browser, or use the Design review canvas in this session.
 The prototype works from a local file with no server, build, fonts download or
 dependency installation. It makes **no camera, device or preference requests**.
@@ -60,5 +65,6 @@ corrections were then checked against regenerated screenshots and targeted
 interaction assertions in the main session because this runtime does not
 support continuation of a synchronous reviewer.
 
-The visual direction and native behavior changes remain **unapproved**.
-This is a review artifact, not a new portable release.
+This folder remains a review artifact, not the application. The production
+implementation lives in `src\CameraLightTray.App`; its working behavior and
+limitations are documented in the repository README.

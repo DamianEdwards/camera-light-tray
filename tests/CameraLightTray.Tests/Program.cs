@@ -754,6 +754,7 @@ if (OperatingSystem.IsWindows())
     catch (OperationCanceledException) { }
     passed++; Console.WriteLine("PASS stalled helper reports heartbeat timeout separately from setup failure and shutdown");
 }
+passed += await StudioChecks.RunAsync();
 Console.WriteLine($"{passed} tests passed.");
 
 internal sealed class FakeLights : ILightTransport

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T10:23:28.246-08:00",
+  "title": "Design System: Camera Light Tray — Native Studio",
+  "extensions": {
+    "native": {
+      "platform": "Windows 11 x64",
+      "framework": "Microsoft UI Reactor / WinUI 3",
+      "units": "DIP",
+      "tokenSource": "DESIGN.md frontmatter",
+      "status": "Implemented; user-approved November 6, 2026",
+      "windows": {
+        "flyout": { "width": 400, "height": "min(730, 178 + max(1, lightCount) * 224)", "resizable": false, "corners": "Rounded" },
+        "settings": { "width": 940, "height": 780, "minWidth": 620, "minHeight": 500, "backdrop": "Mica", "navigationWidth": 180 }
+      },
+      "placement": "Tray anchored; position and size clamped to monitor work area.",
+      "dismissal": "Escape; deactivation except demo/smoke. Settings close hides and stops preview.",
+      "selection": { "control": "Native CheckBox", "visualLabel": "", "width": 44, "height": 44, "minWidth": 44, "minHeight": 44, "padding": [12, 0, 0, 0], "accessibleName": "Descriptive selection action" },
+      "sliders": {
+        "brightness": { "min": 0, "max": 100, "step": 1, "unit": "%", "track": ["#49555F", "#CAD3DA"] },
+        "temperature": { "min": 2900, "max": 7000, "step": 100, "unit": "K", "track": ["#EFCAA0", "#A5CEDC"] },
+        "height": 26,
+        "thumbBackground": "#A9BECD",
+        "thumbBorder": "#EBF1F5",
+        "valueFillOpacity": 0,
+        "thumbToolTip": false
+      },
+      "equipment": {
+        "models": ["KeyLight", "KeyLightAir", "UnknownLight"],
+        "states": ["on", "off", "unknown"],
+        "width": 58,
+        "height": 65.25,
+        "unknownWhen": "TLS model or non-fresh observation",
+        "highContrast": "Native glyph replaces SVG"
+      },
+      "accessibility": "Native keyboard controls and automation names; system HC colors; custom toggle/slider brushes removed in HC.",
+      "disclosures": "Open state retained across periodic updates.",
+      "manualControl": "Serialized per-light edits; preserve untouched fields; Resume auto or activation completion ends override; physical readbacks confirm state.",
+      "triggerSelection": "No selected apps means no automatic activation; explicit All cameras; suggestions and new lights never opt in automatically.",
+      "evidence": {
+        "screenshots": ["artifacts\\studio-smoke-data\\studio-on.png", "artifacts\\studio-smoke-data\\studio-settings.png"],
+        "kind": "Synthetic native client-area renders; not physical hardware evidence",
+        "appsCaptureStatus": "44-DIP action-column source corrected; screenshot recapture follows"
+      }
+    }
+  },
+  "narrative": {
+    "northStar": "Studio — equipment-first quick controls"
+  }
+}

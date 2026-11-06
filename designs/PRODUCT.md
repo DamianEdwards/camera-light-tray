@@ -43,11 +43,15 @@ setup and app selection; explore alternatives before committing a design.
 Original SVG illustrations are acceptable. Do not copy Elgato's logo or
 redistribute product photos without permission.
 
+## Selected direction
+
+Studio was approved for native implementation on November 6, with refinement
+of the original product illustrations. The other compositions remain references.
+
 ## Open decisions
 
-- Flyout layout and density; the prototype provides three alternatives.
-- Direct power, brightness and temperature controls are proposed UI behavior,
-  not shipped functionality.
+- This browser artifact simulates direct controls. The native implementation
+  now provides serialized manual power, brightness and temperature operations.
 - An explicit "Any app" mode is a possible future feature, not today's implicit
   meaning of an empty selection. It is deliberately absent from the prototype.
 - Proposed manual edits suspend automatic control of that light until the

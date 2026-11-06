@@ -121,6 +121,14 @@ components:
 
 # Design System: Camera Light Tray — Design exploration
 
+> **ARCHIVED comparison record — status updated November 6, 2026.**
+> The user approved Studio for native implementation, including refined original
+> product illustrations; native Studio is implemented. Root `..\DESIGN.md` and
+> `..\design-system.json` are authoritative for that implementation.
+> Studio, Compact and Gallery below are archived comparison compositions.
+> Historical “provisional”, “no direction selected” and “unapproved” statements
+> describe the earlier review, not the current approval or native status.
+
 ## Overview
 
 **Creative North Star: "Control Center's compact equipment grammar"**

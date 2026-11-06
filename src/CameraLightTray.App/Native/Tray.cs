@@ -36,6 +36,12 @@ internal sealed unsafe partial class Tray : IDisposable
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct Point { internal int X, Y; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Rect { internal int Left, Top, Right, Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Identifier { internal uint Size; internal nint Window; internal uint Id; internal Guid Guid; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo { internal uint Size; internal Rect Monitor, Work; internal uint Flags; }
     private static readonly Dictionary<nint, Tray> Windows = [];
     private readonly nint _window;
     private readonly uint _taskbarCreated;
@@ -43,12 +49,15 @@ internal sealed unsafe partial class Tray : IDisposable
     private readonly Action<string> _error;
     internal Action? Resumed;
     private bool _added;
+    private readonly IconHandle _lightIcon, _darkIcon;
     internal nint Handle => _window;
     internal void SelectForSmoke() => SendMessage(_window, 0x8002, 0, (nint)((1 << 16) | 0x400));
     internal static void CloseForSmoke(nint window) => SendMessage(window, 0x10, 0, 0);
 
     internal Tray(Action show, Action pause, Action exit, Action<string> error)
     {
+        _lightIcon = IconHandle.Load("TrayLight.ico");
+        _darkIcon = IconHandle.Load("TrayDark.ico");
         _show = show; _pause = pause; _exit = exit; _error = error;
         const string className = "CameraLightTray.Hidden";
         fixed (char* name = className)
@@ -66,9 +75,11 @@ internal sealed unsafe partial class Tray : IDisposable
     }
     private IconData Data()
     {
+        using var settings = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        bool lightTaskbar = settings?.GetValue("SystemUsesLightTheme") is int value && value != 0;
         var data = new IconData { Size = (uint)sizeof(IconData), Window = _window, Id = 1,
-            Flags = 1 | 2 | 4 | 0x80, Callback = 0x8002, Icon = LoadIcon(0, (nint)32516) };
-        const string tip = "Camera Light Tray - open settings";
+            Flags = 1 | 2 | 4 | 0x80, Callback = 0x8002, Icon = (lightTaskbar ? _darkIcon : _lightIcon).DangerousGetHandle() };
+        const string tip = "Camera Light Tray - light controls";
         tip.AsSpan().CopyTo(new Span<char>(data.Tip, 128));
         return data;
     }
@@ -89,6 +100,7 @@ internal sealed unsafe partial class Tray : IDisposable
             try
             {
                 if (message == tray._taskbarCreated) { tray.Add(); return 0; }
+                if (message == 0x1A && tray._added) { var data = tray.Data(); ShellNotifyIcon(1, ref data); }
                 if (message == 0x218 && wparam is 7 or 18) { tray.Resumed?.Invoke(); return 1; }
                 if (message == 0x11) return 1;
                 if (message == 0x16 && wparam != 0) { tray._exit(); return 0; }
@@ -108,7 +120,7 @@ internal sealed unsafe partial class Tray : IDisposable
     {
         using var menu = new MenuHandle(CreatePopupMenu());
         if (menu.IsInvalid) throw new Win32Exception(Marshal.GetLastPInvokeError());
-        if (AppendMenu(menu, 0, 1, "Open Camera Light Tray") == 0 ||
+        if (AppendMenu(menu, 0, 1, "Light controls") == 0 ||
             AppendMenu(menu, 0, 2, "Pause / resume automation") == 0 ||
             AppendMenu(menu, 0, 3, "Exit") == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
         GetCursorPos(out var point);
@@ -124,6 +136,40 @@ internal sealed unsafe partial class Tray : IDisposable
         if (_added) { var data = Data(); ShellNotifyIcon(2, ref data); _added = false; }
         Windows.Remove(_window);
         DestroyWindow(_window);
+        _lightIcon.Dispose(); _darkIcon.Dispose();
+    }
+    internal void Place(Microsoft.UI.Reactor.ReactorWindow window, int logicalHeight)
+    {
+        var id = new Identifier { Size = (uint)sizeof(Identifier), Window = _window, Id = 1 };
+        if (ShellNotifyIconGetRect(ref id, out var anchor) < 0)
+        {
+            if (GetCursorPos(out var cursor) == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
+            anchor = new Rect { Left = cursor.X, Right = cursor.X + 1, Top = cursor.Y, Bottom = cursor.Y + 1 };
+        }
+        nint monitor = MonitorFromRect(ref anchor, 2);
+        var info = new MonitorInfo { Size = (uint)sizeof(MonitorInfo) };
+        if (GetMonitorInfo(monitor, ref info) == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
+        int result = GetDpiForMonitor(monitor, 0, out uint dpi, out _);
+        Marshal.ThrowExceptionForHR(result);
+        var rectangle = FlyoutPlacement.Fit(new(info.Work.Left, info.Work.Top, info.Work.Right - info.Work.Left, info.Work.Bottom - info.Work.Top),
+            new(anchor.Left, anchor.Top, anchor.Right - anchor.Left, anchor.Bottom - anchor.Top),
+            (int)(400 * dpi / 96), (int)(logicalHeight * dpi / 96), (int)(8 * dpi / 96));
+        window.NativeWindow.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
+    }
+    private sealed partial class IconHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        private IconHandle(nint value) : base(true) => SetHandle(value);
+        internal static IconHandle Load(string name)
+        {
+            var value = LoadImage(0, Path.Combine(AppContext.BaseDirectory, "Assets", name), 1, 0, 0, 0x10 | 0x40);
+            if (value == 0) throw new Win32Exception(Marshal.GetLastPInvokeError(), "Cannot load application tray artwork.");
+            return new(value);
+        }
+        protected override bool ReleaseHandle() => DestroyIcon(handle) != 0;
+        [LibraryImport("user32.dll", EntryPoint = "LoadImageW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
+        private static partial nint LoadImage(nint instance, string name, uint type, int width, int height, uint flags);
+        [LibraryImport("user32.dll")]
+        private static partial int DestroyIcon(nint icon);
     }
     private sealed class MenuHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
@@ -144,8 +190,14 @@ internal sealed unsafe partial class Tray : IDisposable
     private static partial uint RegisterWindowMessage(string message);
     [LibraryImport("shell32.dll", EntryPoint = "Shell_NotifyIconW", SetLastError = true)]
     private static partial int ShellNotifyIcon(uint operation, ref IconData data);
-    [LibraryImport("user32.dll", EntryPoint = "LoadIconW")]
-    private static partial nint LoadIcon(nint instance, nint name);
+    [LibraryImport("shell32.dll", EntryPoint = "Shell_NotifyIconGetRect")]
+    private static partial int ShellNotifyIconGetRect(ref Identifier id, out Rect rect);
+    [LibraryImport("user32.dll")]
+    private static partial nint MonitorFromRect(ref Rect rect, uint flags);
+    [LibraryImport("user32.dll", EntryPoint = "GetMonitorInfoW", SetLastError = true)]
+    private static partial int GetMonitorInfo(nint monitor, ref MonitorInfo info);
+    [LibraryImport("shcore.dll")]
+    private static partial int GetDpiForMonitor(nint monitor, int kind, out uint x, out uint y);
     [LibraryImport("user32.dll", SetLastError = true)]
     private static partial nint CreatePopupMenu();
     [LibraryImport("user32.dll", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
