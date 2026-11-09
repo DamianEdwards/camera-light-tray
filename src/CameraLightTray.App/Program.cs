@@ -72,13 +72,12 @@ internal static class Program
                 }
                 ReactorWindow ShowFlyout()
                 {
-                    int height = Math.Min(730, 178 + Math.Max(1, session.Preferences.Lights.Count) * 224);
                     if (flyout is null)
                     {
                         flyout = ReactorApp.OpenWindow(new WindowSpec
                         {
                             Title = demo ? "Camera Light Tray - Studio demo" : "Camera Light Tray - Light controls",
-                            Width = 400, Height = height, Style = WindowStyle.None,
+                            Width = 400, Style = WindowStyle.None,
                             SizeToContent = WindowSizeToContent.Height, MaxHeight = 730,
                             ResizeMode = WindowResizeMode.NoResize, ShowInTaskbar = false, ShowInSwitcher = false,
                             CornerStyle = WindowCornerStyle.Rounded, ActivateOnOpen = !smoke
@@ -189,8 +188,9 @@ internal static class Program
                 var footer = Find(root, "StudioFooter") as FrameworkElement ?? throw new InvalidOperationException("Studio footer missing.");
                 var rowBounds = row.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, row.ActualWidth, row.ActualHeight));
                 var footerBounds = footer.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, footer.ActualWidth, footer.ActualHeight));
-                if (footerBounds.Y - rowBounds.Bottom > 2)
-                    throw new InvalidOperationException("Studio must not leave an empty band between its last light and footer.");
+                if (Math.Abs(footerBounds.Y - rowBounds.Bottom) > 2)
+                    throw new InvalidOperationException($"Studio must neither clip its last light nor leave an empty footer band: row bottom={rowBounds.Bottom:0.##}; footer top={footerBounds.Y:0.##}.");
+                CheckPopupParts(lit, session);
             });
             await OnUIAsync(() => CaptureAsync(lit, Path.Combine(directory, "studio-on.png")));
             await OnUI(() =>
@@ -313,7 +313,7 @@ internal static class Program
             await OnUI(() =>
             {
                 File.WriteAllText(Path.Combine(directory, "smoke-result.txt"),
-                    "PASS: Native Studio flyout and settings, page-scroll reset on navigation with background-scroll preservation, content-sized popup, System/Light/Dark appearance, aligned rows, stable navigation hover across background updates, no expanding regions, camera activation/restoration, manual controls, settings cog and safe setup defaults.");
+                    "PASS: Native Studio flyout and settings, unclipped native switch/slider template parts in normal and hover states, fully visible light rows, page-scroll reset with background preservation, shared appearance, stable navigation hover, camera automation, manual controls and safe setup defaults.");
                 finish(0);
             });
         }
@@ -354,6 +354,21 @@ internal static class Program
             });
             if (mode != AppearanceMode.System)
             {
+                await OnUI(() =>
+                {
+                    foreach (var light in session.Preferences.Lights)
+                    {
+                        foreach (string prefix in new[] { "Auto-", "Brightness-", "Temperature-" })
+                        {
+                            var control = Find(popup.NativeWindow.Content, prefix + light.Id) as Control ??
+                                throw new InvalidOperationException("Native popup control missing.");
+                            if (!VisualStateManager.GoToState(control, "PointerOver", false))
+                                throw new InvalidOperationException("Native popup hover state missing.");
+                        }
+                    }
+                });
+                await Task.Delay(250);
+                await OnUI(() => CheckPopupParts(popup, session));
                 await OnUIAsync(() => CaptureAsync(popup, Path.Combine(directory, $"studio-{mode.ToString().ToLowerInvariant()}.png")));
                 await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, $"settings-{mode.ToString().ToLowerInvariant()}.png")));
             }
@@ -402,6 +417,33 @@ internal static class Program
         yield return root;
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
             foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child;
+    }
+    private static void CheckPopupParts(ReactorWindow window, AppSession session)
+    {
+        var root = window.NativeWindow.Content;
+        foreach (var light in session.Preferences.Lights)
+        {
+            var toggle = Find(root, "Auto-" + light.Id) as FrameworkElement ??
+                throw new InvalidOperationException("Automation switch missing.");
+            foreach (string name in new[] { "OuterBorder", "SwitchKnobOn", "SwitchKnobOff" })
+                Fits(toggle, name);
+            foreach (string prefix in new[] { "Brightness-", "Temperature-" })
+            {
+                var slider = Find(root, prefix + light.Id) as FrameworkElement ??
+                    throw new InvalidOperationException("Popup slider missing.");
+                Fits(slider, "HorizontalTemplate");
+                Fits(slider, "HorizontalThumb");
+            }
+        }
+        static void Fits(FrameworkElement control, string name)
+        {
+            var part = Descendants(control).OfType<FrameworkElement>().FirstOrDefault(element => element.Name == name) ??
+                throw new InvalidOperationException("Native template part missing: " + name);
+            var bounds = part.TransformToVisual(control).TransformBounds(
+                new Windows.Foundation.Rect(0, 0, part.ActualWidth, part.ActualHeight));
+            if (bounds.Y < -0.5 || bounds.Bottom > control.ActualHeight + 0.5)
+                throw new InvalidOperationException($"Native {control.GetType().Name} clips {name}: part={bounds.Y:0.##}..{bounds.Bottom:0.##}, control height={control.ActualHeight:0.##}.");
+        }
     }
     private static async Task<ReactorWindow> OnUIWindow(Func<ReactorWindow> open)
     {

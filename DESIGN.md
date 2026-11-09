@@ -88,8 +88,8 @@ Each model has on/off/unknown art; unknown has a question badge. Unrecognized pr
 
 ## Components
 
-- **Power and Auto:** physical power text/art/button state is independent of automation selection. The per-light Auto switch is 44 × 28 DIP with no on/off content; TLS models cannot be selected for control.
-- **Adjustments:** brightness 0–100, step 1; temperature 2,900–7,000 K, step 100. Native sliders are 26 DIP high, thumb tooltips disabled, labels/values always visible. Stale/TLS controls are disabled; readings say last known, Not read or Unavailable.
+- **Power and Auto:** physical power text/art/button state is independent of automation selection. The per-light Auto switch uses its intrinsic WinUI size and built-in content label; TLS models cannot be selected for control. Do not reduce the template's natural height to compact the layout.
+- **Adjustments:** brightness 0–100, step 1; temperature 2,900–7,000 K, step 100. Native sliders keep their intrinsic template height, thumb tooltips disabled, labels/values always visible. Hover, thumbs and tracks must fit their controls; complete normal light rows must fit above the footer. Stale/TLS controls are disabled; readings say last known, Not read or Unavailable.
 - **Manual ownership:** power/slider edits serialize with automation and put that light in manual override without changing untouched fields. Automation does not fight the edit; **Resume auto** returns control, and activation completion ends the override. Manual edits are not rolled back at call end.
 - **Readback:** physical readbacks are authoritative; optimistic artwork never asserts confirmed power. Unknown camera activity holds owned lights rather than becoming idle/off. Unreachable lights disclose reconnection while other lights remain usable.
 - **Triggers:** no selected apps means no automatic activation. Suggestions never grant permission. **All cameras** is explicit; preview camera selection is independent. Newly discovered lights remain opted out.

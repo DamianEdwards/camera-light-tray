@@ -19,7 +19,7 @@
       "sliders": {
         "brightness": { "min": 0, "max": 100, "step": 1, "unit": "%", "track": ["#49555F", "#CAD3DA"] },
         "temperature": { "min": 2900, "max": 7000, "step": 100, "unit": "K", "track": ["#EFCAA0", "#A5CEDC"] },
-        "height": 26,
+        "height": "Intrinsic WinUI template size; no forced compact height",
         "thumbBackground": "#A9BECD",
         "thumbBorder": "#EBF1F5",
         "valueFillOpacity": 0,

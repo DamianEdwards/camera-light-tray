@@ -217,8 +217,8 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.7
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.7\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.8
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.8\CameraLightTray.exe
 ```
 
 On a Windows 11 desktop, the native test executable also supports a real,

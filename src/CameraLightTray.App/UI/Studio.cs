@@ -146,7 +146,12 @@ internal sealed class Studio(AppSession session) : Component
                     StudioStyle.Text("Choose your LAN and discover lights. New lights stay off until you select them."),
                     Button("Add lights", () => { session.Page = 3; Settings(); })).Padding(24) :
                 VStack(0, settings.Lights.Select(light => (Element)Component<StudioLight, StudioLightProps>(new(session, light, session.Revision)).WithKey(light.Id)).ToArray()))
-                .MaxHeight(500).Grid(row: 2),
+                .MaxHeight(500).HorizontalContentAlignment(HorizontalAlignment.Stretch)
+                .Set(viewer =>
+                {
+                    viewer.HorizontalScrollMode = Microsoft.UI.Xaml.Controls.ScrollMode.Disabled;
+                    viewer.HorizontalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Disabled;
+                }).Grid(row: 2),
             VStack(0, StudioStyle.Line(),
                 StudioStyle.Split(StudioStyle.Text($"{settings.Lights.Count(l => l.Enabled && !l.Tls)} lights set to auto", 11),
                     Button("Manage triggers  ›", () => { session.Page = 1; Settings(); })
@@ -192,7 +197,7 @@ internal sealed class StudioLight : Component<StudioLightProps>
                     if (label == "Brightness" && next != observation.State!.Brightness) session.AdjustLight(light, brightness: next);
                     if (label == "Temperature" && next != (int)(Math.Round(LightControls.Kelvin(observation.State!.Temperature) / 100d) * 100))
                         session.AdjustLight(light, kelvin: next);
-                }).Height(26).MinHeight(0).IsEnabled(fresh && !session.Busy).AutomationName($"{light.Name} {label}").AutomationId(id)
+                }).IsEnabled(fresh && !session.Busy).AutomationName($"{light.Name} {label}").AutomationId(id)
                     .Set(slider =>
                     {
                         slider.StepFrequency = label == "Brightness" ? 1 : 100;
@@ -213,11 +218,15 @@ internal sealed class StudioLight : Component<StudioLightProps>
                     .AutomationName(fresh ? $"Turn {light.Name} {(observation.State!.On == 1 ? "off" : "on")}" : $"{light.Name}: power unknown")
                     .AutomationId("Power-" + light.Id).IsEnabled(fresh && !session.Busy).Grid(column: 2).VAlign(VerticalAlignment.Center)
             ]),
-            StudioStyle.Split(HStack(8,
-                ToggleSwitch(light.Enabled, value => session.SelectLight(light, value)).Width(44).MinWidth(0).Height(28).MinHeight(0).IsEnabled(!light.Tls)
+            StudioStyle.Split(
+                ToggleSwitch(light.Enabled, value => session.SelectLight(light, value)).IsEnabled(!light.Tls)
+                    .FontSize(11).Foreground(StudioStyle.Color("#B2BCC6"))
                     .AutomationName("Automate " + light.Name).AutomationId("Auto-" + light.Id)
-                    .Set(toggle => { toggle.OnContent = null; toggle.OffContent = null; }),
-                StudioStyle.Text(manual ? "Manual override" : "Auto with camera", 11).VAlign(VerticalAlignment.Center)),
+                    .Set(toggle =>
+                    {
+                        toggle.OnContent = manual ? "Manual override" : "Auto with camera";
+                        toggle.OffContent = manual ? "Manual override" : "Auto with camera";
+                    }),
                 manual ? Button("Resume auto", () => session.Run(() => session.ResumeLightAsync(light)))
                     .FontSize(11).AutomationId("Resume-" + light.Id).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0)
                     .Foreground(StudioStyle.Color("#A9CADF")) : Empty()),
