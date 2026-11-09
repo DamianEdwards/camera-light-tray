@@ -35,7 +35,8 @@ internal sealed class Dashboard(AppSession session) : Component
         }, session.Page, session.ShellRevision);
         return Grid([GridSize.Px(180), GridSize.Star()], [GridSize.Star()], [
             navigation.Grid(),
-            Component<DashboardPage, DashboardPageProps>(new(session, session.Page, session.ShellRevision)).Grid(column: 1)
+            Component<DashboardPage, DashboardPageProps>(new(session, session.Page, session.ShellRevision))
+                .WithKey("settings-page-" + session.Page).Grid(column: 1)
         ]).Background(StudioStyle.Color("#FBFCFD", true)).RequestedTheme(AppTheme.Element).AutomationId("Dashboard");
     }
 }

@@ -268,11 +268,52 @@ internal static class Program
             });
             await Task.Delay(250);
             await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, "studio-settings.png")));
+            await OnUI(() =>
+            {
+                window.Update(window.Spec with { Height = 500 });
+                Invoke(window, "OpenRules");
+            });
+            await Task.Delay(250);
+            ScrollViewer? originalScroll = null;
+            await OnUI(() =>
+            {
+                originalScroll = Find(window.NativeWindow.Content, "SettingsScroll") as ScrollViewer ??
+                    throw new InvalidOperationException("Settings scroller missing.");
+                if (originalScroll.ScrollableHeight < 100) throw new InvalidOperationException("Scroll regression fixture must overflow.");
+                originalScroll.ChangeView(null, 100, null, true);
+            });
+            await Task.Delay(250);
+            await OnUI(() =>
+            {
+                if (originalScroll!.VerticalOffset < 99) throw new InvalidOperationException("Could not scroll the source page.");
+                for (int i = 0; i < 10; i++) session.Notify();
+            });
+            await Task.Delay(250);
+            await OnUI(() =>
+            {
+                if (!ReferenceEquals(originalScroll, Find(window.NativeWindow.Content, "SettingsScroll")) || originalScroll!.VerticalOffset < 99)
+                    throw new InvalidOperationException("Background updates must preserve the current page's scroll position.");
+                Invoke(window, "OpenDiagnostics");
+            });
+            await Task.Delay(250);
+            await OnUI(() =>
+            {
+                if (Find(window.NativeWindow.Content, "SettingsScroll") is not ScrollViewer { VerticalOffset: 0 })
+                    throw new InvalidOperationException("Navigation must start the destination page at the top.");
+                Invoke(window, "OpenRules");
+            });
+            await Task.Delay(250);
+            await OnUI(() =>
+            {
+                if (Find(window.NativeWindow.Content, "SettingsScroll") is not ScrollViewer { VerticalOffset: 0 })
+                    throw new InvalidOperationException("Returning to a page must also reset its scroll position.");
+                window.Update(window.Spec with { Height = 780 });
+            });
             await CheckAppearanceAndLayoutAsync(window, popup!, session, directory);
             await OnUI(() =>
             {
                 File.WriteAllText(Path.Combine(directory, "smoke-result.txt"),
-                    "PASS: Native Studio flyout and settings, content-sized popup, System/Light/Dark appearance, aligned rows, stable navigation hover across background updates, no expanding regions, camera activation/restoration, manual controls, settings cog and safe setup defaults.");
+                    "PASS: Native Studio flyout and settings, page-scroll reset on navigation with background-scroll preservation, content-sized popup, System/Light/Dark appearance, aligned rows, stable navigation hover across background updates, no expanding regions, camera activation/restoration, manual controls, settings cog and safe setup defaults.");
                 finish(0);
             });
         }

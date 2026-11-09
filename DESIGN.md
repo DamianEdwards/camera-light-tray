@@ -71,6 +71,7 @@ Native TextBlocks wrap and receive automation names; values retain `%` and `K`, 
 - Settings request 940 × 780 DIP, minimum 620 × 500; a fixed 180-DIP navigation rail accompanies scrolling content padded 32 × 28. Rail padding is 12 × 24.
 - All row content and actions align on their vertical centers. Horizontal scrolling is disabled and the vertical gutter is reserved, so long technical content cannot widen unrelated rows.
 - The navigation element tree is memoized by page/theme only. Native hover state must survive background updates; repeated monitoring or readback notifications must not rebuild its button content.
+- A page change creates a fresh page/scroller identity and starts at vertical offset zero, including when returning to a page. Live updates and theme changes preserve the current page's scroll position.
 - Apps and trigger-camera selections have empty visual labels, descriptive automation names and 44 × 44-DIP targets, including minimum size; Apps uses a trailing action column.
 - Placement anchors to the tray and clamps position and size to the monitor work area, accounting for taskbar edges. This is native window placement, not breakpoint layout.
 
