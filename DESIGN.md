@@ -42,7 +42,7 @@ components:
 Studio is the implemented native Windows design, approved November 6, 2026:
 > love the first one, 'Studio'. The icons for the lights need refinement to better match the real products, but they're a good start. Go ahead and implement the Studio design, commit and push all changes when complete.
 
-The dark flyout puts equipment, physical power and visible adjustments first; the cog opens light native settings. The platform is Windows 11 x64, .NET 11, Microsoft UI Reactor / WinUI 3, Native AOT and the shared Windows App SDK. Normal monitoring needs no elevation or helper.
+The flyout puts equipment, physical power and visible adjustments first; the cog opens native settings. Both windows use one saved System/Light/Dark preference under General. System follows Windows app colors live. The platform is Windows 11 x64, .NET 11, Microsoft UI Reactor / WinUI 3, Native AOT and the shared Windows App SDK. Normal monitoring needs no elevation or helper.
 **Key Characteristics:** recognizable original equipment SVGs; separate power and automation; honest uncertainty; progressively disclosed setup and diagnostics.
 Authority: `src\CameraLightTray.App\UI\Studio.cs`, `UI\Dashboard.cs`, `Program.cs` WindowSpecs and `Native\FlyoutPlacement.cs`; context: `README.md` and `designs\PRODUCT.md`.
 `artifacts\studio-smoke-data\studio-on.png` and `studio-settings.png` are synthetic native client-area renders, not hardware readings or window-chrome captures. Apps selection targets now follow the corrected 44-DIP source; screenshot recapture follows.
@@ -52,7 +52,7 @@ Root `DESIGN.md` and `design-system.json` describe native Studio. The three comp
 
 - **Primary:** muted Studio blue marks known-on power buttons, enabled flyout automation switches and text actions; accent ink contrasts the on button.
 - **Neutral:** charcoal surface, raised power controls, fine dividers, light primary text and muted labels establish the flyout hierarchy.
-- **Settings:** light surface and navigation fields, a tinted selected page and app-selection summary; body text and ordinary controls inherit native light-theme resources.
+- **Settings:** shared light/dark semantic surfaces, a tinted selected page and app-selection summary; ordinary controls inherit the selected native theme. Light uses the existing pale surfaces with dark text; Dark uses the Studio charcoal palette.
 - **States:** warning text accompanies unknown camera/light state and errors. Warm lit panels use the fixed SVG fill, not a temperature- or brightness-derived measurement.
 - Slider track gradients and thumb brushes are recorded in the JSON extension. High contrast substitutes system foreground/background and removes custom toggle/slider brushes.
 
@@ -65,10 +65,12 @@ Native TextBlocks wrap and receive automation names; values retain `%` and `K`, 
 
 ## Layout
 
-- Flyout: 400 DIP wide, borderless, non-resizable, absent from taskbar/switcher. Height is `min(730, 178 + max(1, lightCount) × 224)`; two lights request 626 DIP.
+- Flyout: 400 DIP wide, borderless, non-resizable, absent from taskbar/switcher. Native SizeToContent determines height; the equipment scroller is bounded at 500 DIP and the overall window is capped to the monitor work area. No fixed blank band precedes the footer.
 - Header, automation summary, scrolling equipment region and footer are separate grid rows. The approved two-product composition keeps both brightness and temperature sliders visible.
 - Header padding is 18 × 12; equipment rows 16 × 12 with a 6-DIP stack gap. Row headings use 68 / flexible / auto columns; art is 58 × 65.25 DIP.
 - Settings request 940 × 780 DIP, minimum 620 × 500; a fixed 180-DIP navigation rail accompanies scrolling content padded 32 × 28. Rail padding is 12 × 24.
+- All row content and actions align on their vertical centers. Horizontal scrolling is disabled and the vertical gutter is reserved, so long technical content cannot widen unrelated rows.
+- The navigation element tree is memoized by page/theme only. Native hover state must survive background updates; repeated monitoring or readback notifications must not rebuild its button content.
 - Apps and trigger-camera selections have empty visual labels, descriptive automation names and 44 × 44-DIP targets, including minimum size; Apps uses a trailing action column.
 - Placement anchors to the tray and clamps position and size to the monitor work area, accounting for taskbar edges. This is native window placement, not breakpoint layout.
 
@@ -90,16 +92,16 @@ Each model has on/off/unknown art; unknown has a question badge. Unrecognized pr
 - **Manual ownership:** power/slider edits serialize with automation and put that light in manual override without changing untouched fields. Automation does not fight the edit; **Resume auto** returns control, and activation completion ends the override. Manual edits are not rolled back at call end.
 - **Readback:** physical readbacks are authoritative; optimistic artwork never asserts confirmed power. Unknown camera activity holds owned lights rather than becoming idle/off. Unreachable lights disclose reconnection while other lights remain usable.
 - **Triggers:** no selected apps means no automatic activation. Suggestions never grant permission. **All cameras** is explicit; preview camera selection is independent. Newly discovered lights remain opted out.
-- **Settings:** Automation, Apps, Cameras, Lights and General share the native navigation surface. Search, counts, selection rows and contextual empty-state actions lead; identity, connection, monitor, privacy and experimental details use native disclosures.
-- **Disclosure and feedback:** open state survives periodic updates. Errors use text or native InfoBars; caveats appear in the relevant detail rather than repeating everywhere.
-- **Keyboard and lifecycle:** native buttons, switches, checkboxes, sliders, fields and expanders retain keyboard and accessibility paths. Escape dismisses the flyout; deactivation dismisses normal runs. Closing settings hides it and stops preview; the cog hides the flyout before showing settings.
+- **Settings:** Automation, Apps, Cameras, Lights, General and Diagnostics share the native navigation surface. Search, counts and selections lead. Camera preview and manual entry forms are ordinary visible sections; longer technical details are on Diagnostics.
+- **Sections and feedback:** no expanding regions change the page's measure or surrounding control sizes. Errors use text or native InfoBars.
+- **Keyboard and lifecycle:** native buttons, switches, checkboxes, sliders and fields retain keyboard and accessibility paths. Escape dismisses the flyout; deactivation dismisses normal runs. Closing settings hides it and stops preview; the cog hides the flyout before showing settings.
 - **Synthetic testing:** Demo remains visibly labelled; native settings show a non-closable Synthetic demo InfoBar with no hardware access. Demo/smoke intentionally suppress deactivation dismissal for testing.
 
 ## Do's and Don'ts
 
 - **Do** preserve the approved equipment-first Studio composition and native control/keyboard/high-contrast paths.
 - **Do** keep known power, unknown power, automation eligibility and manual override separate; trust physical readbacks.
-- **Do** retain visible slider labels/units, explicit selections, saved disclosure state and contextual diagnostics.
+- **Do** retain visible slider labels/units, explicit selections, stable content constraints and contextual diagnostics.
 - **Don't** infer off from an unreachable light, idle from camera uncertainty, a product from unknown identity, or every app from an empty selection.
 - **Don't** treat synthetic captures as physical-device evidence or archived browser mockup dimensions as native specifications.
 - **Don't** introduce another UI framework, speculative token scales or copied product branding/photography; retain the original refined equipment SVGs.

@@ -45,6 +45,14 @@ internal static class Program
             ReactorApp.ShutdownPolicy = ShutdownPolicy.Explicit;
             ReactorApp.Run(context =>
             {
+                bool? captionDark = null;
+                void ApplyCaption()
+                {
+                    if (window is null || exiting || captionDark == AppTheme.Dark) return;
+                    Tray.SetDarkCaption(WinRT.Interop.WindowNative.GetWindowHandle(window.NativeWindow), AppTheme.Dark);
+                    captionDark = AppTheme.Dark;
+                }
+                session.ShellChanged += ApplyCaption;
                 void ShowSettings()
                 {
                     if (window is null)
@@ -58,6 +66,7 @@ internal static class Program
                         }, () => new Dashboard(session));
                         window.Closing += (_, e) => { if (!exiting) { e.Cancel = true; session.HidePreview(); window.Hide(); } };
                     }
+                    ApplyCaption();
                     window.Show();
                     if (!smoke) window.Activate();
                 }
@@ -70,17 +79,19 @@ internal static class Program
                         {
                             Title = demo ? "Camera Light Tray - Studio demo" : "Camera Light Tray - Light controls",
                             Width = 400, Height = height, Style = WindowStyle.None,
+                            SizeToContent = WindowSizeToContent.Height, MaxHeight = 730,
                             ResizeMode = WindowResizeMode.NoResize, ShowInTaskbar = false, ShowInSwitcher = false,
                             CornerStyle = WindowCornerStyle.Rounded, ActivateOnOpen = !smoke
                         }, () => new Studio(session));
                         flyout.Closing += (_, e) => { if (!exiting) { e.Cancel = true; flyout.Hide(); } };
                         flyout.Deactivated += (_, _) => { if (!smoke && !demo) flyout.Hide(); };
+                        flyout.NativeWindow.SizeChanged += (_, _) => { if (!exiting) tray?.Place(flyout); };
                         flyout.NativeWindow.Content.KeyDown += (_, e) =>
                         {
                             if (e.Key == Windows.System.VirtualKey.Escape) { flyout.Hide(); e.Handled = true; }
                         };
                     }
-                    tray!.Place(flyout, height);
+                    tray!.Place(flyout);
                     flyout.Show();
                     if (!smoke) flyout.Activate();
                     return flyout;
@@ -174,6 +185,12 @@ internal static class Program
                 if (Find(root, "Power-demo:light") is not Button power ||
                     Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(power) != "Turn Key Light off")
                     throw new InvalidOperationException("Studio light rows must refresh their displayed power state from live readbacks.");
+                var row = Find(root, "LightRow-demo:air") as FrameworkElement ?? throw new InvalidOperationException("Second light row missing.");
+                var footer = Find(root, "StudioFooter") as FrameworkElement ?? throw new InvalidOperationException("Studio footer missing.");
+                var rowBounds = row.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, row.ActualWidth, row.ActualHeight));
+                var footerBounds = footer.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, footer.ActualWidth, footer.ActualHeight));
+                if (footerBounds.Y - rowBounds.Bottom > 2)
+                    throw new InvalidOperationException("Studio must not leave an empty band between its last light and footer.");
             });
             await OnUIAsync(() => CaptureAsync(lit, Path.Combine(directory, "studio-on.png")));
             await OnUI(() =>
@@ -187,22 +204,13 @@ internal static class Program
                 Invoke(window, "SaveRules");
                 if (!session.AutomationDetail.Contains("restored", StringComparison.Ordinal))
                     throw new InvalidOperationException("Synthetic release did not restore prior state.");
-                Invoke(window, "OpenGeneral");
+                Invoke(window, "OpenDiagnostics");
             });
             await Task.Delay(250);
             await OnUI(() =>
             {
                 if (Find(window.NativeWindow.Content, "SetupMonitor") is not Button { IsEnabled: false })
                     throw new InvalidOperationException("Setup must be disabled in synthetic smoke.");
-                var detail = Find(window.NativeWindow.Content, "Detail:Experimental tools") as Expander ??
-                    throw new InvalidOperationException("Experimental disclosure missing.");
-                detail.IsExpanded = false;
-            });
-            await Task.Delay(600);
-            await OnUI(() =>
-            {
-                if (Find(window.NativeWindow.Content, "Detail:Experimental tools") is not Expander { IsExpanded: false })
-                    throw new InvalidOperationException("Disclosure state must survive periodic UI updates.");
                 Tray.CloseForSmoke(WinRT.Interop.WindowNative.GetWindowHandle(window.NativeWindow));
             });
             await Task.Delay(150);
@@ -260,10 +268,11 @@ internal static class Program
             });
             await Task.Delay(250);
             await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, "studio-settings.png")));
+            await CheckAppearanceAndLayoutAsync(window, popup!, session, directory);
             await OnUI(() =>
             {
                 File.WriteAllText(Path.Combine(directory, "smoke-result.txt"),
-                    "PASS: Native Studio flyout and settings, custom tray callback, close/reopen, safe defaults, camera activation/restoration, manual brightness and power controls, settings cog, rules and disabled setup.");
+                    "PASS: Native Studio flyout and settings, content-sized popup, System/Light/Dark appearance, aligned rows, stable navigation hover across background updates, no expanding regions, camera activation/restoration, manual controls, settings cog and safe setup defaults.");
                 finish(0);
             });
         }
@@ -278,6 +287,80 @@ internal static class Program
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         AppSession.Post(() => { try { action(); completion.SetResult(); } catch (Exception ex) { completion.SetException(ex); } });
         return completion.Task;
+    }
+    private static async Task CheckAppearanceAndLayoutAsync(ReactorWindow window, ReactorWindow popup, AppSession session, string directory)
+    {
+        await OnUI(() => Invoke(window, "OpenGeneral"));
+        await Task.Delay(150);
+        foreach (var mode in new[] { AppearanceMode.Light, AppearanceMode.Dark, AppearanceMode.System })
+        {
+            await OnUI(() =>
+            {
+                var selector = Find(window.NativeWindow.Content, "Appearance") as ComboBox ??
+                    throw new InvalidOperationException("System/Light/Dark appearance selector is missing.");
+                selector.SelectedIndex = (int)mode;
+                popup.Show();
+            });
+            await Task.Delay(300);
+            await OnUI(() =>
+            {
+                var settingsRoot = Find(window.NativeWindow.Content, "Dashboard") as FrameworkElement;
+                var popupRoot = Find(popup.NativeWindow.Content, "StudioFlyout") as FrameworkElement;
+                if (settingsRoot?.RequestedTheme != AppTheme.Element || popupRoot?.RequestedTheme != AppTheme.Element)
+                    throw new InvalidOperationException("Both windows must use the same selected appearance.");
+                if (session.Preferences.Appearance != mode)
+                    throw new InvalidOperationException("Appearance preference did not persist.");
+            });
+            if (mode != AppearanceMode.System)
+            {
+                await OnUIAsync(() => CaptureAsync(popup, Path.Combine(directory, $"studio-{mode.ToString().ToLowerInvariant()}.png")));
+                await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, $"settings-{mode.ToString().ToLowerInvariant()}.png")));
+            }
+        }
+        await OnUI(() => Invoke(window, "OpenCameras"));
+        await Task.Delay(200);
+        await OnUI(() =>
+        {
+            var root = window.NativeWindow.Content;
+            var glyph = Find(root, "CameraGlyph-demo:camera") as FrameworkElement ?? throw new InvalidOperationException("Camera glyph missing.");
+            var label = Find(root, "CameraName-demo:camera") as FrameworkElement ?? throw new InvalidOperationException("Camera label missing.");
+            var a = glyph.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, glyph.ActualWidth, glyph.ActualHeight));
+            var b = label.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, label.ActualWidth, label.ActualHeight));
+            if (Math.Abs(a.Y + a.Height / 2 - b.Y - b.Height / 2) > 1)
+                throw new InvalidOperationException("Camera glyph and label must align on their vertical center.");
+            if (Descendants(root).Any(element => element is Expander))
+                throw new InvalidOperationException("Everyday settings must not depend on expanding regions.");
+        });
+        await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, "settings-cameras.png")));
+        await OnUI(() => Invoke(window, "OpenApps"));
+        await Task.Delay(200);
+        int renders = 0;
+        Button? navigation = null;
+        await OnUI(() =>
+        {
+            navigation = Find(window.NativeWindow.Content, "OpenLights") as Button ?? throw new InvalidOperationException("Navigation item missing.");
+            if (!VisualStateManager.GoToState(navigation, "PointerOver", false))
+                throw new InvalidOperationException("Native navigation hover state unavailable.");
+            renders = session.SettingsShellRenders;
+            for (int i = 0; i < 20; i++) session.Notify();
+        });
+        await Task.Delay(650);
+        await OnUI(() =>
+        {
+            if (session.SettingsShellRenders != renders)
+                throw new InvalidOperationException("Background updates must not re-render the navigation shell.");
+            bool hovering = Descendants(navigation!).OfType<FrameworkElement>()
+                .SelectMany(element => VisualStateManager.GetVisualStateGroups(element))
+                .Any(group => group.Name == "CommonStates" && group.CurrentState?.Name == "PointerOver");
+            if (!hovering) throw new InvalidOperationException("Background updates reset the native navigation hover state.");
+        });
+        await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, "studio-settings.png")));
+    }
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root)
+    {
+        yield return root;
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child;
     }
     private static async Task<ReactorWindow> OnUIWindow(Func<ReactorWindow> open)
     {

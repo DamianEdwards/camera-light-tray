@@ -47,7 +47,9 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: studio-native-ui
-          path: artifacts/smoke-*/studio-*.png
+          path: |
+            artifacts/smoke-*/studio-*.png
+            artifacts/smoke-*/settings-*.png
           if-no-files-found: warn
           retention-days: 7
       - name: Install LocalService helper and verify standard-user IPC on disposable runner

@@ -10,15 +10,48 @@ namespace CameraLightTray.App.UI;
 // navigation rail. Power and automation remain separate, including uncertainty.
 internal sealed class Dashboard(AppSession session) : Component
 {
+    public override Element Render()
+    {
+        var (_, update) = UseState(session.ShellRevision);
+        UseEffect(() =>
+        {
+            void Changed() => update(session.ShellRevision);
+            session.ShellChanged += Changed;
+            return () => session.ShellChanged -= Changed;
+        }, session);
+        string[] names = ["Automation", "Apps", "Cameras", "Lights", "General", "Diagnostics"];
+        string[] glyphs = ["\uE80F", "\uE71D", "\uE714", "\uE781", "\uE713", "\uE9D9"];
+        var navigation = UseMemo(() =>
+        {
+            session.SettingsShellRenders++;
+            return VStack(6, names.Select((name, index) => (Element)Button(
+                HStack(12, StudioStyle.Glyph(glyphs[index]).VAlign(VerticalAlignment.Center),
+                    TextBlock(name).FontSize(13).VAlign(VerticalAlignment.Center)),
+                () => session.Page = index)
+                .HorizontalContentAlignment(HorizontalAlignment.Left).HAlign(HorizontalAlignment.Stretch).Padding(12, 10)
+                .Background(StudioStyle.Color(session.Page == index ? "#DFE9F1" : "Transparent", true)).BorderThickness(0)
+                .AutomationName(name).WithKey(name).AutomationId(index == 0 ? "OpenRules" : index == 4 ? "OpenGeneral" : "Open" + name)).ToArray())
+                .Padding(12, 24).Background(StudioStyle.Color("#F0F3F6", true));
+        }, session.Page, session.ShellRevision);
+        return Grid([GridSize.Px(180), GridSize.Star()], [GridSize.Star()], [
+            navigation.Grid(),
+            Component<DashboardPage, DashboardPageProps>(new(session, session.Page, session.ShellRevision)).Grid(column: 1)
+        ]).Background(StudioStyle.Color("#FBFCFD", true)).RequestedTheme(AppTheme.Element).AutomationId("Dashboard");
+    }
+}
+
+internal sealed record DashboardPageProps(AppSession Session, int Page, int ShellRevision);
+internal sealed class DashboardPage : Component<DashboardPageProps>
+{
+    private AppSession session => Props.Session;
     private static TextBlockElement Copy(string text, double size = 13) =>
         TextBlock(text).FontSize(size).TextWrapping().AutomationName(text);
     private static Element Description(string text) => Copy(text).Opacity(0.8);
     private static Element Rule() => Border(null).Height(1).Background(StudioStyle.Color("#D8E0E6"));
     private static Element Heading(string title, string description) =>
         VStack(8, Copy(title, 26).SemiBold(), Description(description)).Margin(bottom: 24);
-    private Element Detail(string title, Element content, bool expanded = false) =>
-        Expander(title, content, session.DetailOpen(title, expanded), open => session.SetDetailOpen(title, open))
-            .AutomationId("Detail:" + title).HorizontalContentAlignment(HorizontalAlignment.Stretch).HAlign(HorizontalAlignment.Stretch).Margin(top: 18);
+    private static Element Section(string title, Element content) =>
+        VStack(10, Copy(title, 16).SemiBold(), content).Margin(top: 20).HAlign(HorizontalAlignment.Stretch);
     private static Element Row(Element content, Element action) => VStack(0,
         StudioStyle.Split(content, action).Padding(0, 16), Rule());
     private static CheckBoxElement Selection(bool selected, Action<bool> changed, string name) =>
@@ -34,23 +67,19 @@ internal sealed class Dashboard(AppSession session) : Component
             session.Changed += Changed;
             return () => session.Changed -= Changed;
         }, session);
-        var names = new[] { "Automation", "Apps", "Cameras", "Lights", "General" };
-        var glyphs = new[] { "\uE80F", "\uE71D", "\uE714", "\uE781", "\uE713" };
-        return Grid([GridSize.Px(180), GridSize.Star()], [GridSize.Star()], [
-            VStack(6, names.Select((name, index) => (Element)Button(HStack(12, StudioStyle.Glyph(glyphs[index]), Copy(name)),
-                () => Navigate(index)).HorizontalContentAlignment(HorizontalAlignment.Left).HAlign(HorizontalAlignment.Stretch).Padding(12, 10)
-                .Background(StudioStyle.Color(session.Page == index ? "#DFE9F1" : "Transparent", true)).BorderThickness(0)
-                .AutomationName(name).WithKey(name).AutomationId(index == 0 ? "OpenRules" : index == 4 ? "OpenGeneral" : "Open" + name)).ToArray())
-                .Padding(12, 24).Background(StudioStyle.Color("#F0F3F6", true)).Grid(),
-            ScrollViewer(VStack(12,
+        return ScrollViewer(VStack(12,
                 session.Demo ? InfoBar("Synthetic demo", "Example camera and lights only; no hardware access.").Informational().IsClosable(false) :
                     session.Isolated ? InfoBar("Isolated run", "Separate preferences; machine setup and startup are disabled.").Informational().IsClosable(false) : null,
                 !string.IsNullOrEmpty(session.Error) ? InfoBar("Action failed", session.Error).Error().IsClosable(true).Closed(() => session.Report("")) : null,
                 !string.IsNullOrEmpty(session.Notice) ? Description(session.Notice) : null,
-                session.Page switch { 1 => Apps(), 2 => Cameras(), 3 => Lights(), 4 => General(), _ => Automation() }
-            ).Padding(32, 28)).Grid(column: 1)
-        ]).Background(StudioStyle.Color("#FBFCFD", true))
-            .Set(element => ((FrameworkElement)element).RequestedTheme = ElementTheme.Light).AutomationId("Dashboard");
+                Props.Page switch { 1 => Apps(), 2 => Cameras(), 3 => Lights(), 4 => General(), 5 => Diagnostics(), _ => Automation() }
+            ).Padding(32, 28)).HorizontalContentAlignment(HorizontalAlignment.Stretch)
+            .Set(viewer =>
+            {
+                viewer.HorizontalScrollMode = Microsoft.UI.Xaml.Controls.ScrollMode.Disabled;
+                viewer.HorizontalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Disabled;
+                viewer.VerticalScrollBarVisibility = Microsoft.UI.Xaml.Controls.ScrollBarVisibility.Visible;
+            }).AutomationId("SettingsScroll");
     }
 
     private Element Apps()
@@ -70,8 +99,8 @@ internal sealed class Dashboard(AppSession session) : Component
                 .AutomationName("Search apps").AutomationId("AppSearch"),
             Rule(),
             VStack(0, apps.Select(app => Row(
-                HStack(12, session.IconPath(app.Key) is { } path ? Image(path).Width(30).Height(30).AccessibilityHidden() :
-                    StudioStyle.Glyph("\uE71D", 24).Width(30).AccessibilityHidden(),
+                HStack(12, session.IconPath(app.Key) is { } path ? Image(path).Width(30).Height(30).VAlign(VerticalAlignment.Center).AccessibilityHidden() :
+                    StudioStyle.Glyph("\uE71D", 24).Width(30).VAlign(VerticalAlignment.Center).AccessibilityHidden(),
                     VStack(4, Copy(app.Name).SemiBold(), Description(app.Status == CameraStatus.Active ? "Camera in use" :
                         app.Status == CameraStatus.Unknown ? "Camera state unknown" : "Not using a monitored camera"))),
                 Selection(settings.Apps.Any(a => a.Enabled && a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)),
@@ -80,12 +109,10 @@ internal sealed class Dashboard(AppSession session) : Component
             StudioStyle.Split(Button(session.ShowAllApps ? "Show suggested apps" : "Show all running apps",
                 () => { session.ShowAllApps = !session.ShowAllApps; session.Notify(); }).AutomationName("Show or hide all running apps").Background(StudioStyle.Color("Transparent", true)).BorderThickness(0),
                 Button("Clear selection", session.ClearApps).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0)),
-            Detail("Add an app by executable path", VStack(10,
+            Section("Add an app by executable path", VStack(10,
                 TextBox(session.AppPath, value => session.AppPath = value, "Full path to an .exe").AutomationName("Executable path").AutomationId("AppPath"),
                 Button("Add executable", session.AddApp).AutomationId("AddApp"))),
-            Detail("How suggestions and identities work", VStack(10,
-                Description("Selected apps, active clients, webcam-capable installed packages and communication apps appear first. Suggestions never grant permission or select apps."),
-                VStack(8, settings.Apps.Where(a => a.Enabled).Select(a => Copy(a.Name + "\n" + a.Key, 11).WithKey(a.Key)).ToArray())))
+            Button("App identity details", () => Navigate(5)).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0)
         );
     }
 
@@ -101,12 +128,12 @@ internal sealed class Dashboard(AppSession session) : Component
                     if (enabled) session.MonitorAllCameras();
                     else if (cameras.Length > 0) session.SelectCamera(cameras[0], true);
                 }, "Monitor all cameras")),
-            VStack(0, cameras.Select(camera => Row(HStack(12, StudioStyle.Glyph("\uE714"),
-                Copy(camera.Name)), Selection(settings.CameraIds.Count == 0 || settings.CameraIds.Contains(camera.Id, StringComparer.OrdinalIgnoreCase),
+            VStack(0, cameras.Select(camera => Row(HStack(12, StudioStyle.Glyph("\uE714").VAlign(VerticalAlignment.Center).AutomationId("CameraGlyph-" + camera.Id),
+                Copy(camera.Name).VAlign(VerticalAlignment.Center).AutomationId("CameraName-" + camera.Id)), Selection(settings.CameraIds.Count == 0 || settings.CameraIds.Contains(camera.Id, StringComparer.OrdinalIgnoreCase),
                     enabled => session.SelectCamera(camera, enabled), "Trigger on " + camera.Name).IsEnabled(settings.CameraIds.Count > 0)).WithKey(camera.Id)).ToArray()),
             settings.CameraIds.Any(id => !cameras.Any(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) ?
                 InfoBar("Saved camera unavailable", "Choose an available camera or monitor all cameras.").Warning().IsClosable(false) : null,
-            !session.Demo ? Detail("Local camera preview", VStack(12,
+            !session.Demo ? Section("Local camera preview", VStack(12,
                 Description("Select Camera Light Tray under Apps if you want this preview to trigger lighting. No recording."),
                 ComboBox(cameras.Select(c => c.Name).ToArray(), Array.FindIndex(cameras, c => c.Id == session.PreviewCameraId),
                     index => { if (index >= 0 && index < cameras.Length) { session.PreviewCameraId = cameras[index].Id; session.Notify(); } })
@@ -116,8 +143,7 @@ internal sealed class Dashboard(AppSession session) : Component
                 MediaPlayerElement(null).Height(240).OnMount(element => session.AttachPreview((Microsoft.UI.Xaml.Controls.MediaPlayerElement)element))
                     .OnUnmount(_ => session.HidePreview()),
                 Copy(session.PreviewDetail, 11).AutomationId("PreviewStatus"))) : null,
-            Detail("Monitor details", VStack(10, Copy(session.SensorDetail, 12).AutomationId("SensorStatus"),
-                Description("Unknown holds owned lights rather than guessing the camera is off. Normal monitoring does not require helper installation.")))
+            Button("Monitor details", () => Navigate(5)).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0)
         );
     }
 
@@ -137,15 +163,11 @@ internal sealed class Dashboard(AppSession session) : Component
             settings.Lights.Count == 0 ? Description("No lights yet. Discover them on your LAN, then select the ones you want.") : null,
             VStack(0, settings.Lights.Select(light => Row(HStack(12, StudioStyle.Art(light, session.Observation(light.Id)),
                 VStack(5, Copy(light.Name).SemiBold(), Description(light.Tls ? "TLS model · unsupported" :
-                    session.Observation(light.Id).Fresh ? "Connected" : "Power unknown · reconnecting"))),
+                    session.Observation(light.Id).Fresh ? "Connected" : "Power unknown · reconnecting")).VAlign(VerticalAlignment.Center)),
                 CheckBox(light.Enabled, value => session.SelectLight(light, value), "Auto").IsEnabled(!light.Tls)
                     .AutomationName("Automate " + light.Name)).WithKey(light.Id)).ToArray()),
-            Detail("Connection details", VStack(12,
-                Description("Requests bind to the selected LAN. VPN routes are never changed."),
-                VStack(10, settings.Lights.Select(light => VStack(5, Copy($"{light.Name}\n{light.Host}:{light.Port}", 12),
-                    Copy(session.LightReading(light.Id), 11),
-                    Button("Test connection", () => session.Run(() => session.TestLightAsync(light))).IsEnabled(!session.Busy && !light.Tls)).WithKey(light.Id)).ToArray()))),
-            Detail("Add a known address", VStack(10,
+            Button("Connection details", () => Navigate(5)).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0),
+            Section("Add a known address", VStack(10,
                 TextBox(session.LightAddress, value => session.LightAddress = value, "Light IPv4 address").AutomationName("Light IPv4 address"),
                 Button("Add light", () => session.Run(session.AddLightAsync)).IsEnabled(!session.Demo && !session.Busy)))
         );
@@ -171,9 +193,7 @@ internal sealed class Dashboard(AppSession session) : Component
             Button("Save timing", session.SaveRules).AutomationId("SaveRules"),
             Row(Copy("Override"), ComboBox(["Automatic", "Paused", "Manual on", "Manual off"], (int)session.Mode, index => session.SetMode((ManualMode)index)).AutomationName("Automation override")),
             Copy(session.ActivityTitle).SemiBold().AutomationId("AutomationStatus"),
-            Detail("Monitor and restoration details", VStack(10, Copy(session.SensorDetail, 12),
-                Copy(session.AutomationDetail, 12),
-                Description("Unknown camera state keeps owned lights unchanged. Manual edits give that light control until you resume auto or the activation ends."))),
+            Button("Monitor and restoration details", () => Navigate(5)).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0),
             session.Demo ? HStack(8, Button("Start demo camera", () => session.DemoCapture(true)).AutomationId("DemoStart"),
                 Button("Stop demo camera", () => session.DemoCapture(false)).AutomationId("DemoStop")) : null
         );
@@ -181,13 +201,33 @@ internal sealed class Dashboard(AppSession session) : Component
 
     private Element General() => VStack(12,
         Heading("General", "A small utility, out of your way."),
+        Row(VStack(4, Copy("Appearance").SemiBold(), Description("Use the same theme for light controls and settings.")),
+            ComboBox(["System", "Light", "Dark"], (int)session.Preferences.Appearance,
+                index => session.SetAppearance((AppearanceMode)index)).Width(170).AutomationName("Appearance").AutomationId("Appearance")),
         Row(VStack(4, Copy("Start at sign-in").SemiBold(), Description("Start quietly in the tray. No administrator prompt.")),
             ToggleSwitch(session.Preferences.StartAtLogin, session.SetStartup).AutomationName("Start at sign-in").IsEnabled(!session.Isolated && !session.Demo)),
         Row(VStack(4, Copy("When the window closes").SemiBold(), Description("Stay in the tray. Camera preview stops.")), Copy("Keep running", 12)),
-        Detail("Privacy", Description("Background monitoring reads camera activity metadata. Explicit preview stays local and never records or uploads frames. The application sends no telemetry.")),
-        Detail("Experimental tools", VStack(10,
-            Description("The legacy ETW helper is for diagnostics, not a prerequisite for normal monitoring."),
-            Button("Set up / repair legacy helper", () => session.Run(session.SetupAsync)).AutomationId("SetupMonitor")
-                .IsEnabled(!session.Busy && !session.Isolated && !session.Demo)), session.Demo)
+        Section("Privacy", Description("Background monitoring reads camera activity metadata. Explicit preview stays local and never records or uploads frames. The application sends no telemetry."))
     );
+
+    private Element Diagnostics()
+    {
+        var settings = session.Preferences;
+        return VStack(12,
+        Heading("Diagnostics", "Connection and identity details for troubleshooting. Normal monitoring needs no helper."),
+        Section("Camera monitor", VStack(8, Copy(session.SensorDetail, 12).AutomationId("SensorStatus"),
+            Copy(session.AutomationDetail, 12),
+            Description("Unknown camera state keeps owned lights unchanged."))),
+        Section("Light connections", VStack(12, settings.Lights.Select(light => VStack(6,
+            Copy(light.Name).SemiBold(), Copy($"{light.Host}:{light.Port}", 12), Copy(session.LightReading(light.Id), 12),
+            Button("Test connection", () => session.Run(() => session.TestLightAsync(light))).IsEnabled(!session.Busy && !light.Tls))
+                .WithKey(light.Id)).ToArray())),
+        Section("Selected app identities", VStack(10,
+            settings.Apps.Where(app => app.Enabled).Select(app => VStack(4, Copy(app.Name).SemiBold(), Copy(app.Key, 11)).WithKey(app.Key)).ToArray())),
+        Section("Experimental tools", VStack(10,
+            Description("The legacy ETW helper is for diagnostics, not a prerequisite for normal monitoring."),
+            Button("Set up / repair helper (administrator)", () => session.Run(session.SetupAsync)).AutomationId("SetupMonitor")
+                .IsEnabled(!session.Busy && !session.Isolated && !session.Demo)))
+        );
+    }
 }

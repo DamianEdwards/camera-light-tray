@@ -10,7 +10,7 @@
       "tokenSource": "DESIGN.md frontmatter",
       "status": "Implemented; user-approved November 6, 2026",
       "windows": {
-        "flyout": { "width": 400, "height": "min(730, 178 + max(1, lightCount) * 224)", "resizable": false, "corners": "Rounded" },
+        "flyout": { "width": 400, "height": "Native SizeToContent.Height, capped to monitor work area", "equipmentMaxHeight": 500, "resizable": false, "corners": "Rounded" },
         "settings": { "width": 940, "height": 780, "minWidth": 620, "minHeight": 500, "backdrop": "Mica", "navigationWidth": 180 }
       },
       "placement": "Tray anchored; position and size clamped to monitor work area.",
@@ -34,7 +34,9 @@
         "highContrast": "Native glyph replaces SVG"
       },
       "accessibility": "Native keyboard controls and automation names; system HC colors; custom toggle/slider brushes removed in HC.",
-      "disclosures": "Open state retained across periodic updates.",
+      "appearance": { "preference": "General / Appearance", "options": ["System", "Light", "Dark"], "default": "System", "scope": "Both windows; live OS app-color changes" },
+      "sections": "Visible everyday sections; technical details on Diagnostics; no expanding regions.",
+      "navigation": "Memoized by page/theme; native hover survives background updates.",
       "manualControl": "Serialized per-light edits; preserve untouched fields; Resume auto or activation completion ends override; physical readbacks confirm state.",
       "triggerSelection": "No selected apps means no automatic activation; explicit All cameras; suggestions and new lights never opt in automatically.",
       "evidence": {

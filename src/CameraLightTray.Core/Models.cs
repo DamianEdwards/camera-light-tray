@@ -4,6 +4,7 @@ namespace CameraLightTray.Core;
 
 public enum CameraStatus { Unknown, Inactive, Active }
 public enum ManualMode { Automatic, Paused, ForceOn, ForceOff }
+public enum AppearanceMode { System, Light, Dark }
 public sealed record AppChoice(string Key, string Name, bool Enabled = false);
 public sealed record ProcessIdentity(int Pid, long StartTime, int SessionId, string UserSid, string AppKey, string Name);
 public sealed record CameraApp(string Key, string Name, CameraStatus Status);
@@ -20,6 +21,7 @@ public sealed record Settings
 {
     public bool AutomationEnabled { get; set; }
     public bool StartAtLogin { get; set; }
+    public AppearanceMode Appearance { get; set; }
     public int ActivationMilliseconds { get; set; } = 500;
     public int LeaveMilliseconds { get; set; } = 2500;
     public string InterfaceId { get; set; } = "";
@@ -29,6 +31,7 @@ public sealed record Settings
 
     public void Validate()
     {
+        if (!Enum.IsDefined(Appearance)) throw new InvalidDataException("Appearance must be System, Light or Dark.");
         if (Apps is null || Lights is null || CameraIds is null) throw new InvalidDataException("App, light and camera lists are required.");
         if (CameraIds.Count > 256 || CameraIds.Any(string.IsNullOrWhiteSpace) ||
             CameraIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != CameraIds.Count)

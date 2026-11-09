@@ -46,6 +46,10 @@ internal sealed class AppSession
     private readonly List<Task> _editing = [];
     internal Action? OpenSettings { get; set; }
     internal event Action? Changed;
+    internal event Action? ShellChanged;
+    internal int ShellRevision { get; private set; }
+    internal int SettingsShellRenders { get; set; }
+    internal Action<double>? FlyoutMeasured { get; set; }
     internal int Revision { get; private set; }
     internal bool Isolated { get; }
     internal bool Demo { get; }
@@ -60,15 +64,23 @@ internal sealed class AppSession
     internal string LightAddress { get; set; } = "";
     internal string AppSearch { get; set; } = "";
     internal bool ShowAllApps { get; set; }
-    private readonly Dictionary<string, bool> _details = new();
-    internal bool DetailOpen(string key, bool initial) => _details.GetValueOrDefault(key, initial);
-    internal void SetDetailOpen(string key, bool value)
+    private int _page;
+    internal int Page
     {
-        if (_details.TryGetValue(key, out var previous) && previous == value) return;
-        _details[key] = value;
-        Notify();
+        get => _page;
+        set
+        {
+            if (_page == value) return;
+            _page = value;
+            RefreshShell();
+        }
     }
-    internal int Page { get; set; }
+    private void RefreshShell() { ShellRevision++; ShellChanged?.Invoke(); Notify(); }
+    internal void SetAppearance(AppearanceMode mode)
+    {
+        Change(settings => settings.Appearance = mode);
+        UI.AppTheme.Select(Preferences.Appearance);
+    }
     internal string PreviewCameraId { get; set; } = "";
     internal string PreviewDetail { get; private set; } = "Preview is stopped. It never records or uploads images.";
     internal string ActivationInput { get; set; } = "";
@@ -182,6 +194,7 @@ internal sealed class AppSession
     }
     internal void Start()
     {
+        UI.AppTheme.Start(Preferences.Appearance, RefreshShell);
         if (!Demo)
         {
             _monitor = Task.Run(() => MonitorSensorsAsync(_stop.Token));
@@ -364,10 +377,11 @@ internal sealed class AppSession
                     await _automation.ReconcileAsync(desired, preferences.Lights, token);
                     Post(() =>
                     {
+                        bool changed = AutomationDetail != _automation.Status || _lastLightError is not null;
                         AutomationDetail = _automation.Status;
                         if (_lastLightError is not null && Error == _lastLightError) Error = "";
                         _lastLightError = null;
-                        Notify();
+                        if (changed) Notify();
                     });
                 }
                 catch (Exception ex) when (ex is IOException or System.Net.Http.HttpRequestException or
@@ -739,6 +753,7 @@ internal sealed class AppSession
     }
     internal async Task StopAsync()
     {
+        UI.AppTheme.Stop();
         var failures = new List<Exception>();
         _stop.Cancel();
         try { await StopPreviewAsync(); }

@@ -38,11 +38,20 @@ records images, audio or video. The app sends no telemetry.
   and color-temperature sliders. A cog opens the full settings window.
   The flyout anchors to the tray icon, stays within the monitor work area,
   and dismisses on Escape or loss of activation.
-- Separate Automation, Apps, Cameras, Lights, and General settings. App suggestions
+- **General / Appearance** selects **System**, **Light** or **Dark** for both
+  the flyout and settings. System is the default for new and existing
+  preferences and follows Windows app-color changes without restarting.
+  The popup sizes to its content instead of leaving a fixed empty band.
+- Separate Automation, Apps, Cameras, Lights, General and Diagnostics settings. App suggestions
   prioritize saved selections, active clients, installed packages declaring
   webcam capability, and known communications apps such as Teams and Signal.
   Search or show all running processes for other apps. Suggestions are not
   proof of permission, and never enable an app automatically.
+- Settings use fixed-width content constraints and centered row controls.
+  Everyday controls are visible sections, not expanding regions; technical
+  monitor, connection, identity and legacy-helper details live in Diagnostics.
+  The navigation subtree is cached independently of background state updates,
+  so monitoring/readback refreshes do not reset native hover states.
 - Explicit shared-read-only local preview, with camera selection and physical
   light-state readback. The preview selector and automation camera filter are
   independent. Preview is under Cameras and stops on leaving that page,
@@ -97,7 +106,7 @@ a stable release.
 2. Extract the entire ZIP into a stable directory and run `CameraLightTray.exe`
    as yourself, **not as administrator**. The tray flyout shows the current
    camera/automation state. Open the cog for full settings; detailed monitor
-   health is under Cameras. Do not install/repair the
+   health is under Diagnostics. Do not install/repair the
    legacy helper to fix a sensor-report or light-networking problem.
 3. In **Apps**, select apps such as Windows Camera, Teams or Signal.
    In **Cameras**, choose All cameras or select specific trigger cameras.
@@ -108,7 +117,7 @@ a stable release.
    app's camera: the selected lights should turn on after debounce and restore
    their previous state after capture stops plus leave grace.
 
-For a visible verification, expand **Cameras / Local camera preview**, choose the same camera,
+For a visible verification, use **Cameras / Local camera preview**, choose the same camera,
 and press **Start preview**. Preview alone does not grant automation permission:
 select this exact `CameraLightTray.exe` under Apps if you want its preview to
 trigger lights. Alternatively, leave it unselected and watch another selected
@@ -139,7 +148,7 @@ before moving/removing the UI.
 
 **Skip this section for normal use.** The helper is not needed by, or connected
 to, the normal-user UI sensor source. Its setup action is deliberately isolated
-under **Rules / helper** and is never invoked by launching the app.
+under **Diagnostics / Experimental tools** and is never invoked by launching the app.
 
 The ZIP contains `setup-monitor.ps1` and `monitor\CameraLightTray.Monitor.exe`.
 Setup copies **only that fixed helper executable** into
@@ -208,8 +217,8 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.5
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.5\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.6
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.6\CameraLightTray.exe
 ```
 
 On a Windows 11 desktop, the native test executable also supports a real,

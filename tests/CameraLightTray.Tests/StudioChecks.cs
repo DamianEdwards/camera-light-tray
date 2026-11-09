@@ -19,6 +19,19 @@ internal static class StudioChecks
             LightControls.Temperature(4000) == 250 && LightControls.Kelvin(250) == 4000, "Kelvin/mired boundaries must match firmware.");
         Check(LightControls.Adjust(new(0, 26, 205), brightness: 40) == new LightState(0, 40, 205), "Changing brightness must not change power or temperature.");
         Pass("Studio product metadata, legacy preferences, firmware temperature boundaries and field-preserving edits");
+        var oldSettings = System.Text.Json.JsonSerializer.Deserialize("{}", AppJson.Default.Settings)!;
+        Check(oldSettings.Appearance == AppearanceMode.System, "Older preferences must follow the Windows theme.");
+        foreach (var mode in Enum.GetValues<AppearanceMode>())
+        {
+            oldSettings.Appearance = mode;
+            oldSettings.Validate();
+            string json = System.Text.Json.JsonSerializer.Serialize(oldSettings, AppJson.Default.Settings);
+            Check(System.Text.Json.JsonSerializer.Deserialize(json, AppJson.Default.Settings)!.Appearance == mode, "Appearance must survive restart.");
+        }
+        oldSettings.Appearance = (AppearanceMode)99;
+        try { oldSettings.Validate(); throw new InvalidOperationException("Invalid appearance should fail explicitly."); }
+        catch (InvalidDataException) { }
+        Pass("shared appearance defaults to System for old preferences and persists all supported modes");
 
         var transport = new FakeLights();
         var automation = new LightAutomation(transport, _ => { });

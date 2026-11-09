@@ -4,6 +4,7 @@ using Microsoft.UI.Reactor.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Media;
+using System.Runtime.CompilerServices;
 using static Microsoft.UI.Reactor.Factories;
 
 namespace CameraLightTray.App.UI;
@@ -18,10 +19,36 @@ internal static class StudioStyle
     private static readonly Dictionary<string, SvgImageSource> Images = [];
     private static readonly Windows.UI.ViewManagement.AccessibilitySettings Accessibility = new();
     private static readonly Windows.UI.ViewManagement.UISettings UISettings = new();
+    private sealed record AppliedTheme(bool Dark, bool HighContrast);
+    private static readonly ConditionalWeakTable<FrameworkElement, AppliedTheme> Applied = new();
+    private static bool UpdateTheme(FrameworkElement element)
+    {
+        var current = new AppliedTheme(AppTheme.Dark, HighContrast);
+        if (Applied.TryGetValue(element, out var previous) && previous == current) return false;
+        Applied.Remove(element);
+        Applied.Add(element, current);
+        return true;
+    }
     internal static bool HighContrast => Accessibility.HighContrast;
     internal static string Color(string value, bool background = false)
     {
-        if (!HighContrast) return value;
+        if (value == "Transparent") return value;
+        if (!HighContrast)
+            return value.ToUpperInvariant() switch
+            {
+                "#24282E" or "#FBFCFD" => AppTheme.Dark ? "#24282E" : "#FBFCFD",
+                "#30353C" => AppTheme.Dark ? "#30353C" : "#E9EEF2",
+                "#434A53" or "#D8E0E6" => AppTheme.Dark ? "#434A53" : "#D8E0E6",
+                "#F0F3F5" => AppTheme.Dark ? "#F0F3F5" : "#25313C",
+                "#B2BCC6" => AppTheme.Dark ? "#B2BCC6" : "#52616F",
+                "#A9CADF" => AppTheme.Dark ? "#A9CADF" : "#255F8C",
+                "#183345" => AppTheme.Dark ? "#183345" : "#FFFFFF",
+                "#EDC381" => AppTheme.Dark ? "#EDC381" : "#805600",
+                "#F0F3F6" => AppTheme.Dark ? "#20262D" : "#F0F3F6",
+                "#DFE9F1" => AppTheme.Dark ? "#354A5C" : "#DFE9F1",
+                "#EDF5FA" => AppTheme.Dark ? "#2D3F4E" : "#EDF5FA",
+                _ => value
+            };
         var color = UISettings.GetColorValue(background ? Windows.UI.ViewManagement.UIColorType.Background : Windows.UI.ViewManagement.UIColorType.Foreground);
         return $"#{color.R:X2}{color.G:X2}{color.B:X2}";
     }
@@ -29,19 +56,23 @@ internal static class StudioStyle
         TextBlock(text).FontSize(size).Foreground(Color(color)).TextWrapping().AutomationName(text);
     internal static Element Glyph(string glyph, double size = 18) => Icon(FontIcon(glyph, "Segoe Fluent Icons", size));
     internal static Element Split(Element left, Element right) =>
-        Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], [left.Grid(), right.Grid(column: 1).VAlign(VerticalAlignment.Center)]);
+        Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], [
+            left.Grid().VAlign(VerticalAlignment.Center),
+            right.Grid(column: 1).VAlign(VerticalAlignment.Center)]);
     internal static Element Line() => Border(null).Height(1).Background(Color("#434A53"));
     private static Windows.UI.Color Rgb(byte r, byte g, byte b) => new() { A = 255, R = r, G = g, B = b };
     internal static void Accent(FrameworkElement element)
     {
+        if (!UpdateTheme(element)) return;
         string[] keys = ["ToggleSwitchFillOn", "ToggleSwitchFillOnPointerOver", "ToggleSwitchFillOnPressed"];
         if (HighContrast) { foreach (string key in keys) element.Resources.Remove(key); return; }
-        var accent = new SolidColorBrush(Rgb(169, 202, 223));
+        var accent = new SolidColorBrush(AppTheme.Dark ? Rgb(169, 202, 223) : Rgb(37, 95, 140));
         foreach (string key in keys)
             element.Resources[key] = accent;
     }
     internal static void SliderAppearance(Microsoft.UI.Xaml.Controls.Slider slider, bool temperature)
     {
+        if (!UpdateTheme(slider)) return;
         if (HighContrast)
         {
             foreach (string suffix in new[] { "", "PointerOver", "Pressed" })
@@ -56,8 +87,8 @@ internal static class StudioStyle
         {
             slider.Resources["SliderTrackFill" + suffix] = track;
             slider.Resources["SliderTrackValueFill" + suffix] = new SolidColorBrush(Rgb(0, 0, 0)) { Opacity = 0 };
-            slider.Resources["SliderThumbBackground" + suffix] = new SolidColorBrush(Rgb(169, 190, 205));
-            slider.Resources["SliderThumbBorderBrush" + suffix] = new SolidColorBrush(Rgb(235, 241, 245));
+            slider.Resources["SliderThumbBackground" + suffix] = new SolidColorBrush(AppTheme.Dark ? Rgb(169, 190, 205) : Rgb(66, 104, 132));
+            slider.Resources["SliderThumbBorderBrush" + suffix] = new SolidColorBrush(AppTheme.Dark ? Rgb(235, 241, 245) : Rgb(255, 255, 255));
         }
     }
     internal static Element Art(LightDevice light, LightObservation observation, double width = 58)
@@ -115,18 +146,14 @@ internal sealed class Studio(AppSession session) : Component
                     StudioStyle.Text("Choose your LAN and discover lights. New lights stay off until you select them."),
                     Button("Add lights", () => { session.Page = 3; Settings(); })).Padding(24) :
                 VStack(0, settings.Lights.Select(light => (Element)Component<StudioLight, StudioLightProps>(new(session, light, session.Revision)).WithKey(light.Id)).ToArray()))
-                .Grid(row: 2),
+                .MaxHeight(500).Grid(row: 2),
             VStack(0, StudioStyle.Line(),
                 StudioStyle.Split(StudioStyle.Text($"{settings.Lights.Count(l => l.Enabled && !l.Tls)} lights set to auto", 11),
                     Button("Manage triggers  ›", () => { session.Page = 1; Settings(); })
                         .Background(StudioStyle.Color("Transparent", true)).BorderThickness(0).FontSize(11).Foreground(StudioStyle.Color("#A9CADF")))
-                    .Padding(14, 8)).Grid(row: 3)
-        ]).Background(StudioStyle.Color("#24282E", true)).Set(element =>
-        {
-            var root = (FrameworkElement)element;
-            root.RequestedTheme = ElementTheme.Dark;
-            StudioStyle.Accent(root);
-        }).AutomationId("StudioFlyout");
+                    .Padding(14, 8)).Grid(row: 3).AutomationId("StudioFooter")
+        ]).Background(StudioStyle.Color("#24282E", true)).RequestedTheme(AppTheme.Element)
+            .Set(element => StudioStyle.Accent((FrameworkElement)element)).AutomationId("StudioFlyout");
     }
 }
 
@@ -199,6 +226,6 @@ internal sealed class StudioLight : Component<StudioLightProps>
             light.Tls ? StudioStyle.Text("This model uses TLS. Control is not supported yet.", 11, "#EDC381") :
                 !fresh ? StudioStyle.Text(observation.Error is null ? "Checking this light…" : "Reconnecting automatically. Other lights still work.", 11, "#EDC381") :
                 editing ? StudioStyle.Text("Applying adjustment…", 11) : null
-        )).Padding(16, 12).BorderBrush(StudioStyle.Color("#434A53")).BorderThickness(bottom: 1);
+        )).Padding(16, 12).BorderBrush(StudioStyle.Color("#434A53")).BorderThickness(bottom: 1).AutomationId("LightRow-" + light.Id);
     }
 }

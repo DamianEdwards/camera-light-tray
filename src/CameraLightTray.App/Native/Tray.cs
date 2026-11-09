@@ -51,6 +51,11 @@ internal sealed unsafe partial class Tray : IDisposable
     private bool _added;
     private readonly IconHandle _lightIcon, _darkIcon;
     internal nint Handle => _window;
+    internal static void SetDarkCaption(nint window, bool dark)
+    {
+        int value = dark ? 1 : 0;
+        Marshal.ThrowExceptionForHR(DwmSetWindowAttribute(window, 20, ref value, sizeof(int)));
+    }
     internal void SelectForSmoke() => SendMessage(_window, 0x8002, 0, (nint)((1 << 16) | 0x400));
     internal static void CloseForSmoke(nint window) => SendMessage(window, 0x10, 0, 0);
 
@@ -138,7 +143,15 @@ internal sealed unsafe partial class Tray : IDisposable
         DestroyWindow(_window);
         _lightIcon.Dispose(); _darkIcon.Dispose();
     }
-    internal void Place(Microsoft.UI.Reactor.ReactorWindow window, int logicalHeight)
+    private bool _placing;
+    internal void Place(Microsoft.UI.Reactor.ReactorWindow window, int? logicalHeight = null)
+    {
+        if (_placing) return;
+        _placing = true;
+        try { PlaceCore(window, logicalHeight); }
+        finally { _placing = false; }
+    }
+    private void PlaceCore(Microsoft.UI.Reactor.ReactorWindow window, int? logicalHeight)
     {
         var id = new Identifier { Size = (uint)sizeof(Identifier), Window = _window, Id = 1 };
         if (ShellNotifyIconGetRect(ref id, out var anchor) < 0)
@@ -151,9 +164,12 @@ internal sealed unsafe partial class Tray : IDisposable
         if (GetMonitorInfo(monitor, ref info) == 0) throw new Win32Exception(Marshal.GetLastPInvokeError());
         int result = GetDpiForMonitor(monitor, 0, out uint dpi, out _);
         Marshal.ThrowExceptionForHR(result);
+        double maximum = Math.Max(1, (info.Work.Bottom - info.Work.Top) * 96d / dpi - 16);
+        if (window.Spec.MaxHeight != maximum) window.Update(window.Spec with { MaxHeight = maximum });
         var rectangle = FlyoutPlacement.Fit(new(info.Work.Left, info.Work.Top, info.Work.Right - info.Work.Left, info.Work.Bottom - info.Work.Top),
             new(anchor.Left, anchor.Top, anchor.Right - anchor.Left, anchor.Bottom - anchor.Top),
-            (int)(400 * dpi / 96), (int)(logicalHeight * dpi / 96), (int)(8 * dpi / 96));
+            (int)(400 * dpi / 96), logicalHeight is int height ? (int)(height * dpi / 96) :
+                window.NativeWindow.AppWindow.Size.Height, (int)(8 * dpi / 96));
         window.NativeWindow.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
     }
     private sealed partial class IconHandle : SafeHandleZeroOrMinusOneIsInvalid
@@ -198,6 +214,8 @@ internal sealed unsafe partial class Tray : IDisposable
     private static partial int GetMonitorInfo(nint monitor, ref MonitorInfo info);
     [LibraryImport("shcore.dll")]
     private static partial int GetDpiForMonitor(nint monitor, int kind, out uint x, out uint y);
+    [LibraryImport("dwmapi.dll")]
+    private static partial int DwmSetWindowAttribute(nint window, uint attribute, ref int value, uint size);
     [LibraryImport("user32.dll", SetLastError = true)]
     private static partial nint CreatePopupMenu();
     [LibraryImport("user32.dll", EntryPoint = "AppendMenuW", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]
