@@ -173,6 +173,7 @@ internal static class Program
                 await Task.Delay(100);
             }
             await Task.Delay(300);
+            await OnUIAsync(() => CaptureAsync(lit, Path.Combine(directory, "studio-on.png")));
             await OnUI(() =>
             {
                 var root = (FrameworkElement)lit.NativeWindow.Content;
@@ -180,7 +181,7 @@ internal static class Program
                     throw new InvalidOperationException("Second light's temperature control is missing.");
                 var bounds = last.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, last.ActualWidth, last.ActualHeight));
                 if (bounds.Bottom > root.ActualHeight - 30)
-                    throw new InvalidOperationException("Both lights' sliders must fit in the Studio flyout without scrolling.");
+                    throw new InvalidOperationException($"Both lights' sliders must fit in the Studio flyout without scrolling: slider bottom={bounds.Bottom:0.##}; root height={root.ActualHeight:0.##}; window height={lit.NativeWindow.AppWindow.Size.Height}; maximum={lit.Spec.MaxHeight:0.##}; scale={root.XamlRoot.RasterizationScale:0.##}.");
                 if (Find(root, "Power-demo:light") is not Button power ||
                     Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(power) != "Turn Key Light off")
                     throw new InvalidOperationException("Studio light rows must refresh their displayed power state from live readbacks.");
@@ -192,7 +193,6 @@ internal static class Program
                     throw new InvalidOperationException($"Studio must neither clip its last light nor leave an empty footer band: row bottom={rowBounds.Bottom:0.##}; footer top={footerBounds.Y:0.##}.");
                 CheckPopupParts(lit, session);
             });
-            await OnUIAsync(() => CaptureAsync(lit, Path.Combine(directory, "studio-on.png")));
             await OnUI(() =>
             {
                 lit.Hide();
