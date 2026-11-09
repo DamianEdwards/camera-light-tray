@@ -146,7 +146,7 @@ internal sealed class Studio(AppSession session) : Component
                     StudioStyle.Text("Choose your LAN and discover lights. New lights stay off until you select them."),
                     Button("Add lights", () => { session.Page = 3; Settings(); })).Padding(24) :
                 VStack(0, settings.Lights.Select(light => (Element)Component<StudioLight, StudioLightProps>(new(session, light, session.Revision)).WithKey(light.Id)).ToArray()))
-                .MaxHeight(500).HorizontalContentAlignment(HorizontalAlignment.Stretch)
+                .MaxHeight(500).HorizontalContentAlignment(HorizontalAlignment.Stretch).AutomationId("StudioLights")
                 .Set(viewer =>
                 {
                     viewer.HorizontalScrollMode = Microsoft.UI.Xaml.Controls.ScrollMode.Disabled;

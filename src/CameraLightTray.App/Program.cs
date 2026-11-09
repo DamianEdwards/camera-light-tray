@@ -70,6 +70,21 @@ internal static class Program
                     window.Show();
                     if (!smoke) window.Activate();
                 }
+                void PlaceFlyout()
+                {
+                    if (exiting || flyout is null) return;
+                    int? height = null;
+                    if (Find(flyout.NativeWindow.Content, "StudioFlyout") is Grid { ActualHeight: > 0 } root &&
+                        Find(root, "StudioLights") is ScrollViewer { ActualHeight: > 0, Content: FrameworkElement equipment } lights &&
+                        equipment.DesiredSize.Height > 0)
+                    {
+                        // A star-row scroller's constrained DesiredSize cannot grow an auto-sized window.
+                        height = (int)Math.Ceiling(root.RowDefinitions[0].ActualHeight +
+                            root.RowDefinitions[1].ActualHeight + root.RowDefinitions[3].ActualHeight +
+                            Math.Min(equipment.DesiredSize.Height, lights.MaxHeight));
+                    }
+                    tray?.Place(flyout, height);
+                }
                 ReactorWindow ShowFlyout()
                 {
                     if (flyout is null)
@@ -78,19 +93,20 @@ internal static class Program
                         {
                             Title = demo ? "Camera Light Tray - Studio demo" : "Camera Light Tray - Light controls",
                             Width = 400, Style = WindowStyle.None,
-                            SizeToContent = WindowSizeToContent.Height, MaxHeight = 730,
+                            MaxHeight = 730,
                             ResizeMode = WindowResizeMode.NoResize, ShowInTaskbar = false, ShowInSwitcher = false,
                             CornerStyle = WindowCornerStyle.Rounded, ActivateOnOpen = !smoke
                         }, () => new Studio(session));
                         flyout.Closing += (_, e) => { if (!exiting) { e.Cancel = true; flyout.Hide(); } };
                         flyout.Deactivated += (_, _) => { if (!smoke && !demo) flyout.Hide(); };
-                        flyout.NativeWindow.SizeChanged += (_, _) => { if (!exiting) tray?.Place(flyout); };
+                        flyout.NativeWindow.SizeChanged += (_, _) => PlaceFlyout();
+                        ((FrameworkElement)flyout.NativeWindow.Content).LayoutUpdated += (_, _) => PlaceFlyout();
                         flyout.NativeWindow.Content.KeyDown += (_, e) =>
                         {
                             if (e.Key == Windows.System.VirtualKey.Escape) { flyout.Hide(); e.Handled = true; }
                         };
                     }
-                    tray!.Place(flyout);
+                    PlaceFlyout();
                     flyout.Show();
                     if (!smoke) flyout.Activate();
                     return flyout;
@@ -166,6 +182,12 @@ internal static class Program
                     throw new InvalidOperationException("Synthetic camera did not activate simulated light.");
             });
             var lit = await OnUIWindow(showFlyout);
+            await Task.Delay(300);
+            await OnUI(() =>
+            {
+                double scale = lit.NativeWindow.Content.XamlRoot.RasterizationScale;
+                lit.NativeWindow.AppWindow.Resize(new((int)(400 * scale), (int)(320 * scale)));
+            });
             var readbackWait = System.Diagnostics.Stopwatch.StartNew();
             while (session.Preferences.Lights.Any(light => session.Observation(light.Id).State?.On != 1))
             {

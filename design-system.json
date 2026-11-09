@@ -10,7 +10,7 @@
       "tokenSource": "DESIGN.md frontmatter",
       "status": "Implemented; user-approved November 6, 2026",
       "windows": {
-        "flyout": { "width": 400, "height": "Native SizeToContent.Height, capped to monitor work area", "equipmentMaxHeight": 500, "resizable": false, "corners": "Rounded" },
+        "flyout": { "width": 400, "height": "Measured native chrome plus equipment content desired height, capped to monitor work area", "equipmentMaxHeight": 500, "resizable": false, "corners": "Rounded" },
         "settings": { "width": 940, "height": 780, "minWidth": 620, "minHeight": 500, "backdrop": "Mica", "navigationWidth": 180 }
       },
       "placement": "Tray anchored; position and size clamped to monitor work area.",

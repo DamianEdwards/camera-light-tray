@@ -65,7 +65,7 @@ Native TextBlocks wrap and receive automation names; values retain `%` and `K`, 
 
 ## Layout
 
-- Flyout: 400 DIP wide, borderless, non-resizable, absent from taskbar/switcher. Native SizeToContent determines height; the equipment scroller is bounded at 500 DIP and the overall window is capped to the monitor work area. No fixed blank band precedes the footer.
+- Flyout: 400 DIP wide, borderless, non-resizable, absent from taskbar/switcher. Measured native chrome plus the equipment content's desired height determines height, independent of the initial window size; the equipment scroller is bounded at 500 DIP and the overall window is capped to the monitor work area. No fixed blank band precedes the footer.
 - Header, automation summary, scrolling equipment region and footer are separate grid rows. The approved two-product composition keeps both brightness and temperature sliders visible.
 - Header padding is 18 × 12; equipment rows 16 × 12 with a 6-DIP stack gap. Row headings use 68 / flexible / auto columns; art is 58 × 65.25 DIP.
 - Settings request 940 × 780 DIP, minimum 620 × 500; a fixed 180-DIP navigation rail accompanies scrolling content padded 32 × 28. Rail padding is 12 × 24.

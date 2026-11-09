@@ -168,9 +168,12 @@ internal sealed unsafe partial class Tray : IDisposable
         if (window.Spec.MaxHeight != maximum) window.Update(window.Spec with { MaxHeight = maximum });
         var rectangle = FlyoutPlacement.Fit(new(info.Work.Left, info.Work.Top, info.Work.Right - info.Work.Left, info.Work.Bottom - info.Work.Top),
             new(anchor.Left, anchor.Top, anchor.Right - anchor.Left, anchor.Bottom - anchor.Top),
-            (int)(400 * dpi / 96), logicalHeight is int height ? (int)(height * dpi / 96) :
+            (int)(400 * dpi / 96), logicalHeight is int height ? (int)(Math.Min(height, maximum) * dpi / 96) :
                 window.NativeWindow.AppWindow.Size.Height, (int)(8 * dpi / 96));
-        window.NativeWindow.AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
+        var appWindow = window.NativeWindow.AppWindow;
+        if (appWindow.Position.X != rectangle.X || appWindow.Position.Y != rectangle.Y ||
+            appWindow.Size.Width != rectangle.Width || appWindow.Size.Height != rectangle.Height)
+            appWindow.MoveAndResize(new Windows.Graphics.RectInt32(rectangle.X, rectangle.Y, rectangle.Width, rectangle.Height));
     }
     private sealed partial class IconHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
