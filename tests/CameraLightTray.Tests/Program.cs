@@ -8,6 +8,19 @@ using CameraLightTray.App.Platform;
 using CameraLightTray.Tests;
 using CameraLightTray.Core;
 
+if (args is ["--sensor-continuity-check"])
+{
+    Console.WriteLine($"{SensorContinuityChecks.Run()} continuity tests passed.");
+    return;
+}
+
+if (args is ["--sensor-overlap-check", var overlapResultPath])
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+    await SensorOverlapCheck.RunAsync(overlapResultPath);
+    return;
+}
+
 if (args is ["--logging-check"])
 {
     Console.WriteLine($"{await LoggingChecks.RunAsync()} logging tests passed.");
@@ -762,6 +775,7 @@ if (OperatingSystem.IsWindows())
 }
 passed += await StudioChecks.RunAsync();
 passed += await LoggingChecks.RunAsync();
+passed += SensorContinuityChecks.Run();
 Console.WriteLine($"{passed} tests passed.");
 
 internal sealed class FakeLights : ILightTransport

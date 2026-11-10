@@ -24,15 +24,19 @@ records images, audio or video. The app sends no telemetry.
   active Windows Camera session. Select all cameras or a subset. Activity
   aggregates across selected apps and cameras; activation debounce defaults
   to 500ms and leave grace to 2500ms.
-- Temporary sensor or process-owner query failures are shown as unknown and
-  retried automatically after two seconds, rather than stopping monitoring.
-  Recovery requires fresh process identities and camera reports; callbacks
-  from the previous observation are ignored. Native query errors include
-  their Windows error code for diagnostics.
+- Sensor subscriptions, process identities and camera inventory have independent
+  workers. A process-owner query failure makes attribution unknown and retries
+  after two seconds without stopping the native camera subscription or losing
+  reports received in the meantime. Slow camera enumeration cannot stall process
+  identities. Actual native failures and resume require fresh observations.
 - Empty or partial notifications are not a camera-off signal. Each monitored
   camera needs its own reported baseline; updates for another camera do not
-  erase existing activity. Observations are renewed every minute to recover
-  a silently stalled subscription. Unknown continues to hold owned lights.
+  erase existing activity. Background verification starts a replacement after a
+  minute while the primary keeps handling start/stop events. Only a complete,
+  safely attributed baseline can be promoted; cutover is atomic, rejects older
+  transitions/retired callbacks and preserves debounce/grace continuity.
+  Replacement warm-up/failure does not create a scheduled monitoring gap.
+  Unknown continues to hold owned lights.
 - A compact **Studio tray flyout** with original product illustrations, distinct
   on/off/unknown states, independent Auto switches, power controls, brightness
   and color-temperature sliders. A cog opens the full settings window.
@@ -174,6 +178,19 @@ Activity transitions include a reason such as `healthy-idle`, `sensor-unhealthy`
 ages, source epoch and the current monitoring operation. This distinguishes
 a four-second freshness timeout from a genuine sensor-health change.
 
+Verification logs identify the primary and candidate generations, warm-up,
+atomic handover, retirement and failed replacements. An incomplete replacement
+times out after 30 seconds and retries after 30 seconds without stopping the
+primary. Quiet callbacks alone do not mean failure: the API has no documented
+periodic heartbeat. If neither full direct reports nor a successful independent
+verification confirms baselines for five minutes, confidence becomes unknown
+rather than claiming health indefinitely. Fresh, safely attributed positive
+activity may still activate lights while another camera's baseline is uncertain.
+Process identities expire after four seconds; camera inventory expires after
+15 seconds or immediately on a reported query failure. These outages do not
+retire subscriptions. Resume discards pre-sleep subscriptions and in-flight
+identity/inventory results.
+
 Logs stay local and are **not uploaded**. Camera/device/interface identities are
 represented by stable short hashes; process IDs, friendly light names and
 exception messages may still contain private machine or network details.
@@ -254,8 +271,8 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.10
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.10\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.11
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.11\CameraLightTray.exe
 ```
 
 On a Windows 11 desktop, the native test executable also supports a real,

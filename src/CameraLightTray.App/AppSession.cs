@@ -38,15 +38,17 @@ internal sealed class AppSession
     private Settings _settings;
     private MonitorSnapshot? _snapshot;
     private string _sensorMessage = "Waiting for Windows camera activity reports.";
-    private Task? _loop, _monitor, _appDetails, _lightMaintenance;
+    private Task? _loop, _monitor, _identities, _inventory, _appDetails, _lightMaintenance;
     private readonly SemaphoreSlim _discovery = new(1, 1);
     private string? _lastLightError;
-    private readonly SensorState _sensor = new();
+    private readonly SensorObservations _sensor;
     private ProcessIdentity[] _sensorProcesses = [];
     private int[] _sensorOtherOwners = [];
     private CameraDevice[] _sensorCameras = [];
     private int _sensorSession;
-    private volatile bool _restartSensor;
+    private bool _catalogReady, _inventoryReady;
+    private DateTimeOffset _lastInventory, _catalogStarted, _inventoryStarted;
+    private string _catalogError = "Waiting for process identities.", _inventoryError = "Waiting for camera inventory.";
     private CameraApp[] _catalog = [];
     private CameraApp[] _installedCameraApps = [];
     private readonly CameraPreview _preview;
@@ -149,6 +151,7 @@ internal sealed class AppSession
     {
         _storage = storage; Isolated = isolated; Demo = demo;
         _log = logging.CreateLogger<AppSession>();
+        _sensor = new(logging.CreateLogger<SensorObservations>());
         _preview = new(error => Post(() =>
         {
             Report(error);
@@ -213,12 +216,15 @@ internal sealed class AppSession
             string detail = _snapshot?.Detail ?? _sensorMessage;
             string key = $"{status.Code}|{detail}|{_sensor.Epoch}";
             if (_activityLogKey == key) return;
-            _log.LogInformation("Activity transition {Previous} -> {Reason}; title={Title}, healthy={Healthy}, snapshotAgeMs={SnapshotAgeMs}, sequence={Sequence}, epoch={Epoch}, callbackAgeMs={CallbackAgeMs}, catalogAgeMs={CatalogAgeMs}, operation={Operation}, operationAgeMs={OperationAgeMs}, detail={Detail}",
+            _log.LogInformation("Activity transition {Previous} -> {Reason}; title={Title}, healthy={Healthy}, snapshotAgeMs={SnapshotAgeMs}, sequence={Sequence}, epoch={Epoch}, callbackAgeMs={CallbackAgeMs}, catalogAgeMs={CatalogAgeMs}, operation={Operation}, operationAgeMs={OperationAgeMs}, detail={Detail}, catalogOperationAgeMs={CatalogOperationAgeMs}, inventoryAgeMs={InventoryAgeMs}, inventoryOperationAgeMs={InventoryOperationAgeMs}",
                 _activityLogKey, status.Code, status.Title, _snapshot?.Healthy,
                 _snapshot is null ? null : (double?)(now - _snapshot.Time).TotalMilliseconds, _snapshot?.Sequence, _sensor.Epoch,
                 _lastCallback == default ? null : (double?)(now - _lastCallback).TotalMilliseconds,
                 _lastCatalog == default ? null : (double?)(now - _lastCatalog).TotalMilliseconds,
-                _sensorOperation, _sensorOperationStarted == default ? null : (double?)(now - _sensorOperationStarted).TotalMilliseconds, detail);
+                _sensorOperation, _sensorOperationStarted == default ? null : (double?)(now - _sensorOperationStarted).TotalMilliseconds, detail,
+                _catalogStarted == default ? null : (double?)(now - _catalogStarted).TotalMilliseconds,
+                _lastInventory == default ? null : (double?)(now - _lastInventory).TotalMilliseconds,
+                _inventoryStarted == default ? null : (double?)(now - _inventoryStarted).TotalMilliseconds);
             _activityLogKey = key;
             _log.LogInformation("Activity inputs; selectedCameras={SelectedCameras}, availableCameras={AvailableCameras}, unmatchedStreamingPids={UnmatchedStreamingPids}, selectedActive={SelectedActive}, selectedUnknown={SelectedUnknown}, selectedAppStates={SelectedAppStates}",
                 _settings.CameraIds.Count == 0 ? "all" : string.Join(",", _settings.CameraIds.Select(Token)),
@@ -253,7 +259,10 @@ internal sealed class AppSession
         UI.AppTheme.Start(Preferences.Appearance, RefreshShell);
         if (!Demo)
         {
+            using (var process = Process.GetCurrentProcess()) _sensorSession = process.SessionId;
             _monitor = Task.Run(() => MonitorSensorsAsync(_stop.Token));
+            _identities = Task.Run(() => MonitorIdentitiesAsync(_stop.Token));
+            _inventory = Task.Run(() => MonitorInventoryAsync(_stop.Token));
             _appDetails = Task.Run(() => UpdateAppDetailsAsync(_stop.Token));
         }
         _lightMaintenance = Task.Run(() => MaintainLightsAsync(_stop.Token));
@@ -269,55 +278,62 @@ internal sealed class AppSession
             {
                 _snapshot = null;
                 _sensorMessage = "Camera monitoring stopped unexpectedly: " + ex.Message + ". Camera state is unknown.";
-                _sensor.Invalidate(_sensorMessage);
+                _sensor.Invalidate(_sensorMessage, DateTimeOffset.UtcNow);
             }
             NotifySensor();
         }
     }
     private async Task ObserveSensorsAsync(CancellationToken token)
     {
-        using var user = WindowsIdentity.GetCurrent();
-        using var process = Process.GetCurrentProcess();
-        string sid = user.User!.Value;
-        int session = process.SessionId;
-        _sensorSession = session;
-        await SensorMonitorRecovery.RunAsync(async cancellation =>
+        var sources = new Dictionary<long, SensorActivityMonitor>();
+        void Retire(long generation)
+        {
+            var source = sources[generation];
+            sources.Remove(generation);
+            try
             {
-                long epoch;
-                bool catalogReady = false;
-                DateTimeOffset catalogTime = default;
-                string? reportError = null;
+                SetSensorOperation("retire-subscription");
+                source.Dispose();
+                _log.LogInformation("Native sensor subscription retired; generation={Generation}", generation);
+            }
+            catch (Exception ex) when (SensorMonitorRecovery.IsExpected(ex))
+            { _log.LogWarning(ex, "Retired sensor cleanup failed; generation={Generation}; current primary is retained", generation); }
+        }
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            do
+            {
+                long[] retired;
+                long? start = null;
                 lock (_gate)
                 {
-                    _restartSensor = false;
-                    _sensor.Invalidate("Waiting for fresh camera activity reports and process identities.");
-                    _sensorMessage = "Reconnecting Windows camera activity reports; camera state is unknown.";
-                    epoch = _sensor.Epoch;
-                    _snapshot = null;
+                    _sensor.Expire(DateTimeOffset.UtcNow);
+                    UpdateSensorSnapshot();
+                    retired = sources.Keys.Where(id => !_sensor.Contains(id)).ToArray();
+                    if (_sensor.NeedsSource(DateTimeOffset.UtcNow)) start = _sensor.Begin(DateTimeOffset.UtcNow);
                 }
-                _log.LogInformation("Sensor observation starting; epoch={Epoch}", epoch);
-                NotifySensor();
-                using var monitor = new SensorActivityMonitor(
+                foreach (long generation in retired) Retire(generation);
+                if (start is long id)
+                {
+                    var monitor = new SensorActivityMonitor(
                     reports =>
                     {
                         lock (_gate)
                         {
-                            if (!_sensor.Receive(epoch, reports))
+                            if (!_sensor.Receive(id, reports, DateTimeOffset.UtcNow))
                             {
-                                _log.LogInformation("Ignored retired sensor callback; callbackEpoch={CallbackEpoch}, currentEpoch={Epoch}", epoch, _sensor.Epoch);
+                                _log.LogDebug("Ignored retired sensor callback; generation={Generation}", id);
                                 return;
                             }
-                            _lastCallback = DateTimeOffset.UtcNow;
                             _callbackCount++;
                             string summary = string.Join(";", reports.Select(r => $"{Token(r.Id)}:clients={r.Processes.Length}:streaming={string.Join(",", r.Processes.Where(p => p.Streaming).Select(p => p.Pid).Order())}"));
                             if (_callbackSummary != summary)
                             {
-                                _log.LogInformation("Sensor activity report changed; epoch={Epoch}, reports={Reports}, cameras={Cameras}", epoch, reports.Length, summary);
+                                _log.LogInformation("Sensor activity report changed; generation={Generation}, primary={Primary}, epoch={Epoch}, reports={Reports}, cameras={Cameras}", id, _sensor.Primary, _sensor.Epoch, reports.Length, summary);
                                 _callbackSummary = summary;
                             }
-                            _snapshot = catalogReady && DateTimeOffset.UtcNow - catalogTime < TimeSpan.FromSeconds(4) ?
-                                UpdateSensorSnapshot() : null;
-                            _sensorMessage = "Waiting for fresh process identities; camera state is unknown.";
+                            UpdateSensorSnapshot();
                         }
                         NotifySensor();
                     },
@@ -325,82 +341,120 @@ internal sealed class AppSession
                     {
                         lock (_gate)
                         {
-                            if (epoch != _sensor.Epoch) return;
-                            reportError = error;
-                            _log.LogWarning("Sensor callback failed; epoch={Epoch}, error={Error}", epoch, error);
-                            _sensor.Invalidate(error); UpdateSensorSnapshot(); _restartSensor = true;
+                            _sensor.Fail(id, error, DateTimeOffset.UtcNow);
+                            UpdateSensorSnapshot();
                         }
                         NotifySensor();
                     });
-                SetSensorOperation("start-observation");
-                monitor.Start();
-                var observation = Stopwatch.StartNew();
+                    sources.Add(id, monitor);
+                    try { SetSensorOperation("start-subscription"); monitor.Start(); }
+                    catch (Exception ex) when (SensorMonitorRecovery.IsExpected(ex))
+                    {
+                        _log.LogWarning(ex, "Native sensor start failed; generation={Generation}", id);
+                        lock (_gate) { _sensor.Fail(id, ex.Message, DateTimeOffset.UtcNow); UpdateSensorSnapshot(); }
+                        Retire(id);
+                    }
+                }
+                SetSensorOperation("monitoring");
+                NotifySensor();
+            } while (await timer.WaitForNextTickAsync(token));
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        finally
+        {
+            lock (_gate) _sensor.Invalidate("Sensor worker stopped.", DateTimeOffset.UtcNow);
+            foreach (long id in sources.Keys.ToArray()) Retire(id);
+        }
+    }
+    private async Task MonitorIdentitiesAsync(CancellationToken token)
+    {
+        try
+        {
+            using var user = WindowsIdentity.GetCurrent();
+            string sid = user.User!.Value;
+            await SensorMonitorRecovery.RunAsync(async cancellation =>
+            {
                 using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
                 int refresh = 0;
-                CameraDevice[] cameras = [];
                 do
                 {
-                    if (refresh++ % 5 == 0)
-                    {
-                        SetSensorOperation("enumerate-cameras");
-                        var started = Stopwatch.StartNew();
-                        var devices = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask(cancellation);
-                        cameras = devices.Select(d => new CameraDevice(d.Id, d.Name)).OrderBy(c => c.Name).ToArray();
-                        if (refresh == 1 || started.ElapsedMilliseconds >= 500)
-                            _log.LogInformation("Camera enumeration completed; cameras={Cameras}, elapsedMs={ElapsedMs}", cameras.Length, started.ElapsedMilliseconds);
-                        var currentCameras = cameras;
-                        Post(() =>
-                        {
-                            Cameras = currentCameras;
-                            if (string.IsNullOrEmpty(PreviewCameraId)) PreviewCameraId =
-                                Cameras.FirstOrDefault(c => Preferences.CameraIds.Contains(c.Id, StringComparer.OrdinalIgnoreCase))?.Id ??
-                                Cameras.FirstOrDefault()?.Id ?? "";
-                            Notify();
-                        });
-                    }
-                    SetSensorOperation("process-catalog");
-                    var catalogStarted = Stopwatch.StartNew();
-                    var catalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate(sid, session);
+                    long epoch;
+                    lock (_gate) { _catalogStarted = DateTimeOffset.UtcNow; epoch = _sensor.Epoch; }
+                    var started = Stopwatch.StartNew();
+                    var catalog = CameraLightTray.Monitor.ProcessCatalog.Enumerate(sid, _sensorSession);
                     lock (_gate)
                     {
-                        if (epoch != _sensor.Epoch) break;
-                        if (!_sensor.Ready && observation.Elapsed > TimeSpan.FromSeconds(10))
-                            throw new TimeoutException("Windows did not provide a usable camera activity report.");
-                        if (observation.Elapsed >= TimeSpan.FromMinutes(1))
-                        {
-                            _log.LogInformation("Renewing sensor observation after one minute; epoch={Epoch}, callbacks={Callbacks}", epoch, _callbackCount);
-                            _snapshot = null;
-                            _sensor.Invalidate("Refreshing the Windows camera observation.");
-                            break;
-                        }
-                        _sensorProcesses = catalog.Processes; _sensorOtherOwners = catalog.OtherOwners; _sensorCameras = cameras;
-                        catalogTime = DateTimeOffset.UtcNow;
-                        _lastCatalog = catalogTime;
-                        _sensorOperation = "waiting";
-                        _sensorOperationStarted = catalogTime;
-                        catalogReady = true;
+                        if (_sensor.Epoch != epoch) continue;
+                        _sensorProcesses = catalog.Processes; _sensorOtherOwners = catalog.OtherOwners;
+                        _lastCatalog = DateTimeOffset.UtcNow; _catalogStarted = default; _catalogReady = true;
                         var currentSnapshot = UpdateSensorSnapshot();
-                        if (refresh % 30 == 1 || catalogStarted.ElapsedMilliseconds >= 500)
-                            _log.LogInformation("Sensor heartbeat; epoch={Epoch}, callbacks={Callbacks}, callbackAgeMs={CallbackAgeMs}, catalogMs={CatalogMs}, processes={Processes}, excludedOwners={ExcludedOwners}, healthy={Healthy}",
-                                epoch, _callbackCount, _lastCallback == default ? null : (double?)(catalogTime - _lastCallback).TotalMilliseconds,
-                                catalogStarted.ElapsedMilliseconds, catalog.Processes.Length, catalog.OtherOwners.Length, currentSnapshot.Healthy);
+                        if (refresh++ % 30 == 0 || started.ElapsedMilliseconds >= 500)
+                            _log.LogInformation("Sensor heartbeat; primary={Primary}, candidate={Candidate}, epoch={Epoch}, callbacks={Callbacks}, callbackAgeMs={CallbackAgeMs}, catalogMs={CatalogMs}, healthy={Healthy}",
+                                _sensor.Primary, _sensor.Candidate, _sensor.Epoch, _callbackCount,
+                                _lastCallback == default ? null : (double?)(_lastCatalog - _lastCallback).TotalMilliseconds,
+                                started.ElapsedMilliseconds, currentSnapshot.Healthy);
                     }
                     NotifySensor();
-                } while (!_restartSensor && await timer.WaitForNextTickAsync(cancellation));
-                SetSensorOperation("stop-observation");
-                if (reportError is not null) throw new IOException(reportError);
+                } while (await timer.WaitForNextTickAsync(cancellation));
             },
             ex =>
             {
-                _log.LogWarning(ex, "Sensor monitor failed; retryMs={RetryMs}", 2000);
-                string error = ex.Message.TrimEnd('.');
-                if (ex is Win32Exception native)
-                    error += $" (Win32 {native.NativeErrorCode}: {new Win32Exception(native.NativeErrorCode).Message.TrimEnd('.')})";
-                string detail = "Windows sensor monitor unavailable: " + error +
-                    ". Retrying automatically in 2 seconds. Camera state is unknown.";
-                lock (_gate) { _snapshot = null; _sensor.Invalidate(detail); _sensorMessage = detail; }
+                _log.LogWarning(ex, "Process identities unavailable; sensor subscriptions retained; retryMs={RetryMs}", 2000);
+                lock (_gate) { _catalogReady = false; _catalogError = "Process identities unavailable: " + ex.Message; UpdateSensorSnapshot(); }
                 NotifySensor();
             }, TimeSpan.FromSeconds(2), token);
+        }
+        catch (Exception ex)
+        {
+            _log.LogCritical(ex, "Process identity worker stopped");
+            lock (_gate) { _catalogReady = false; _catalogError = "Process identity worker stopped: " + ex.Message; UpdateSensorSnapshot(); }
+            NotifySensor();
+        }
+    }
+    private async Task MonitorInventoryAsync(CancellationToken token)
+    {
+        try
+        {
+            await SensorMonitorRecovery.RunAsync(async cancellation =>
+            {
+                using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+                do
+                {
+                    long epoch;
+                    lock (_gate) { _inventoryStarted = DateTimeOffset.UtcNow; epoch = _sensor.Epoch; }
+                    var started = Stopwatch.StartNew();
+                    var devices = await DeviceInformation.FindAllAsync(DeviceClass.VideoCapture).AsTask(cancellation);
+                    var cameras = devices.Select(d => new CameraDevice(d.Id, d.Name)).OrderBy(c => c.Name).ToArray();
+                    lock (_gate)
+                    {
+                        if (_sensor.Epoch != epoch) continue;
+                        if (!_inventoryReady || started.ElapsedMilliseconds >= 500)
+                            _log.LogInformation("Camera inventory completed; cameras={Cameras}, elapsedMs={ElapsedMs}", cameras.Length, started.ElapsedMilliseconds);
+                        _sensorCameras = cameras; _lastInventory = DateTimeOffset.UtcNow; _inventoryStarted = default; _inventoryReady = true;
+                        UpdateSensorSnapshot();
+                    }
+                    Post(() =>
+                    {
+                        Cameras = cameras;
+                        if (string.IsNullOrEmpty(PreviewCameraId)) PreviewCameraId =
+                            Cameras.FirstOrDefault(c => Preferences.CameraIds.Contains(c.Id, StringComparer.OrdinalIgnoreCase))?.Id ??
+                            Cameras.FirstOrDefault()?.Id ?? "";
+                        NotifySensor();
+                    });
+                } while (await timer.WaitForNextTickAsync(cancellation));
+            }, ex =>
+            {
+                _log.LogWarning(ex, "Camera inventory unavailable; subscriptions retained; retryMs={RetryMs}", 2000);
+                lock (_gate) { _inventoryReady = false; _inventoryError = "Camera inventory unavailable: " + ex.Message; UpdateSensorSnapshot(); }
+                NotifySensor();
+            }, TimeSpan.FromSeconds(2), token);
+        }
+        catch (Exception ex)
+        {
+            _log.LogCritical(ex, "Camera inventory worker stopped");
+            lock (_gate) { _inventoryReady = false; _inventoryError = "Camera inventory worker stopped: " + ex.Message; UpdateSensorSnapshot(); }
+            NotifySensor();
+        }
     }
     private void SetSensorOperation(string operation)
     {
@@ -413,10 +467,17 @@ internal sealed class AppSession
     });
     private MonitorSnapshot UpdateSensorSnapshot()
     {
-        var excluded = _sensorOtherOwners.Concat(_sensor.StreamingProcesses.Where(pid =>
+        var now = DateTimeOffset.UtcNow;
+        string? unavailable = !_catalogReady ? _catalogError :
+            now - _lastCatalog >= TimeSpan.FromSeconds(4) ? "Process identities are stale; camera state is unknown." :
+            !_inventoryReady ? _inventoryError :
+            now - _lastInventory >= TimeSpan.FromSeconds(15) ? "Camera inventory is stale; camera state is unknown." : null;
+        var excluded = unavailable is not null ? [] : _sensorOtherOwners.Concat(_sensor.StreamingProcesses.Where(pid =>
             CameraLightTray.Monitor.ProcessCatalog.IsOtherSession(pid, _sensorSession))).ToArray();
-        return _snapshot = _sensor.Snapshot(_sensorProcesses, excluded, _sensorCameras,
-            _settings.CameraIds, DateTimeOffset.UtcNow);
+        _snapshot = _sensor.Snapshot(_sensorProcesses, excluded, _sensorCameras,
+            _settings.CameraIds, now, unavailable);
+        _lastCallback = _sensor.LastCallback;
+        return _snapshot;
     }
     internal void SelectCamera(CameraDevice camera, bool enabled) => Change(s =>
     {
@@ -868,8 +929,8 @@ internal sealed class AppSession
         {
             _snapshot = null;
             _sensorMessage = "System resumed; waiting for a fresh camera activity report.";
-            _sensor.Invalidate(_sensorMessage);
-            _restartSensor = true;
+            _sensor.Invalidate(_sensorMessage, DateTimeOffset.UtcNow);
+            _catalogReady = _inventoryReady = false;
         }
         NotifySensor();
     }
@@ -888,6 +949,7 @@ internal sealed class AppSession
         try { await StopPreviewAsync(); }
         catch (Exception ex) { failures.Add(ex); }
         try { await Task.WhenAll(_loop ?? Task.CompletedTask, _monitor ?? Task.CompletedTask,
+            _identities ?? Task.CompletedTask, _inventory ?? Task.CompletedTask,
             _appDetails ?? Task.CompletedTask, _lightMaintenance ?? Task.CompletedTask, Task.WhenAll(_editing.ToArray())); }
         catch (Exception ex) { failures.Add(ex); }
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
