@@ -1,5 +1,6 @@
 using CameraLightTray.App.Native;
 using CameraLightTray.Core;
+using CameraLightTray.App.UI;
 
 internal static class StudioChecks
 {
@@ -19,6 +20,16 @@ internal static class StudioChecks
             LightControls.Temperature(4000) == 250 && LightControls.Kelvin(250) == 4000, "Kelvin/mired boundaries must match firmware.");
         Check(LightControls.Adjust(new(0, 26, 205), brightness: 40) == new LightState(0, 40, 205), "Changing brightness must not change power or temperature.");
         Pass("Studio product metadata, legacy preferences, firmware temperature boundaries and field-preserving edits");
+        byte[] Panel(LightState state) => Convert.FromHexString(LightPanelColor.FromReadback(state)[1..]);
+        var warm = Panel(new(1, 100, LightControls.Temperature(2900)));
+        var cool = Panel(new(1, 100, LightControls.Temperature(7000)));
+        Check(warm[0] > warm[2] && cool[2] > cool[0] && cool[2] > warm[2], "Confirmed temperature must visibly tint the panel.");
+        var dim = Panel(new(1, 10, 205));
+        var bright = Panel(new(1, 90, 205));
+        Check(dim.Zip(bright).All(pair => pair.First < pair.Second), "Confirmed brightness must change all panel channels monotonically.");
+        Check(LightPanelColor.FromReadback(new(1, -1, 205)) == LightPanelColor.FromReadback(new(1, 0, 205)) &&
+            LightPanelColor.FromReadback(new(1, 101, 205)) == LightPanelColor.FromReadback(new(1, 100, 205)), "Illustrative panel intensity must remain bounded.");
+        Pass("product panels follow confirmed temperature and brightness with bounded illustrative colors");
         var oldSettings = System.Text.Json.JsonSerializer.Deserialize("{}", AppJson.Default.Settings)!;
         Check(oldSettings.Appearance == AppearanceMode.System, "Older preferences must follow the Windows theme.");
         foreach (var mode in Enum.GetValues<AppearanceMode>())

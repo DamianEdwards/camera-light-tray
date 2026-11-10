@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Input;
 using System.Runtime.InteropServices.WindowsRuntime;
 using CameraLightTray.App.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -309,8 +310,9 @@ internal static class Program
             {
                 if (session.Observation("demo:light").State?.On != 0)
                     throw new InvalidOperationException("Native power controls did not toggle the simulated light on and off.");
-                Invoke(popup!, "OpenSettings");
             });
+            await CheckPopupInteractionsAsync(popup!, session, directory);
+            await OnUI(() => Invoke(popup!, "OpenSettings"));
             await Task.Delay(250);
             await OnUI(() =>
             {
@@ -365,7 +367,7 @@ internal static class Program
             await OnUI(() =>
             {
                 File.WriteAllText(Path.Combine(directory, "smoke-result.txt"),
-                    "PASS: Native Studio flyout and settings, unclipped native switch/slider template parts in normal and hover states, fully visible light rows, page-scroll reset with background preservation, shared appearance, stable navigation hover, camera automation, manual controls and safe setup defaults.");
+                    "PASS: Native Studio flyout and settings, stable popup hover, debounced background edits with retained slider focus and layout, cancellation-safe readback health, confirmed brightness/temperature artwork, unclipped controls, page-scroll reset, shared appearance, camera automation and safe setup defaults.");
                 finish(0);
             });
         }
@@ -380,6 +382,114 @@ internal static class Program
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         AppSession.Post(() => { try { action(); completion.SetResult(); } catch (Exception ex) { completion.SetException(ex); } });
         return completion.Task;
+    }
+    private static async Task CheckPopupInteractionsAsync(ReactorWindow popup, AppSession session, string directory)
+    {
+        Button[] buttons = [];
+        object[] content = [];
+        await OnUI(() =>
+        {
+            buttons = new[] { "OpenSettings", "Power-demo:light" }.Select(id =>
+                Find(popup.NativeWindow.Content, id) as Button ?? throw new InvalidOperationException("Popup button missing.")).ToArray();
+            content = buttons.Select(button => button.Content).ToArray();
+            foreach (var button in buttons)
+                if (!VisualStateManager.GoToState(button, "PointerOver", false))
+                    throw new InvalidOperationException("Popup hover state unavailable.");
+            for (int i = 0; i < 20; i++) session.Notify();
+        });
+        await Task.Delay(350);
+        await OnUI(() =>
+        {
+            for (int i = 0; i < buttons.Length; i++)
+                if (!ReferenceEquals(buttons[i].Content, content[i]) ||
+                    !Descendants(buttons[i]).OfType<FrameworkElement>()
+                        .SelectMany(VisualStateManager.GetVisualStateGroups)
+                        .Any(group => group.Name == "CommonStates" && group.CurrentState?.Name == "PointerOver"))
+                    throw new InvalidOperationException("Background updates reset popup button content or hover state.");
+            var powerIcon = Find(buttons[1], "PowerGlyph-demo:light") as Image;
+            if (powerIcon?.Source is not Microsoft.UI.Xaml.Media.Imaging.SvgImageSource ||
+                powerIcon.ActualWidth < 20 || powerIcon.ActualHeight < 20)
+                throw new InvalidOperationException("Power must use the fully contained vector icon, not a cropped font glyph.");
+            Invoke(popup, "Power-demo:light");
+        });
+        await Task.Delay(600);
+        Slider? slider = null;
+        double height = 0;
+        int writes = 0;
+        Windows.UI.Color before = default;
+        Windows.UI.Color Panel()
+        {
+            var panel = Find(popup.NativeWindow.Content, "LightPanel-demo:light") as Border ??
+                throw new InvalidOperationException("Confirmed on-state light panel missing.");
+            return (panel.Background as SolidColorBrush ?? throw new InvalidOperationException("Light panel color missing.")).Color;
+        }
+        void CheckFocus()
+        {
+            var root = (FrameworkElement)popup.NativeWindow.Content;
+            if (!ReferenceEquals(slider, Find(root, AutomationProperties.GetAutomationId(slider!))) ||
+                !slider!.IsEnabled || !Descendants(slider).Contains(FocusManager.GetFocusedElement(root.XamlRoot)))
+                throw new InvalidOperationException("Slider focus/identity was lost while editing in the background.");
+            if (Math.Abs(root.ActualHeight - height) > 1 ||
+                Descendants(root).OfType<TextBlock>().Any(text => text.Text.Contains("Applying adjustment", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Background slider edits must not change popup height or add applying labels.");
+            if (session.Observation("demo:light").Error is not null)
+                throw new InvalidOperationException("Superseded slider cancellation must not mark the light unreachable.");
+        }
+        await OnUI(() =>
+        {
+            session.DemoLightDelayMilliseconds = 150;
+            slider = Find(popup.NativeWindow.Content, "Brightness-demo:light") as Slider ??
+                throw new InvalidOperationException("Brightness slider missing.");
+            height = ((FrameworkElement)popup.NativeWindow.Content).ActualHeight;
+            writes = session.DemoLightWriteCount;
+            before = Panel();
+            if (!slider.Focus(FocusState.Keyboard)) throw new InvalidOperationException("Could not focus native slider.");
+            slider.Value = 36;
+        });
+        await Task.Delay(320);
+        await OnUI(() => { slider!.Value = 37; session.Notify(); });
+        await Task.Delay(320);
+        await OnUI(CheckFocus);
+        for (int value = 38; value <= 41; value++)
+        {
+            int next = value;
+            await OnUI(() => { slider!.Value = next; session.Notify(); CheckFocus(); });
+            await Task.Delay(40);
+        }
+        await OnUI(() =>
+        {
+            if (session.DemoLightWriteCount != writes || Panel() != before)
+                throw new InvalidOperationException("Pending values must debounce without optimistic artwork or premature writes.");
+        });
+        await Task.Delay(1200);
+        await OnUI(() =>
+        {
+            CheckFocus();
+            if (session.DemoLightWriteCount != writes + 1 || session.Observation("demo:light").State?.Brightness != 41 || Panel() == before)
+                throw new InvalidOperationException("Debounced slider intent must apply once and update artwork from readback.");
+            slider = Find(popup.NativeWindow.Content, "Temperature-demo:light") as Slider ??
+                throw new InvalidOperationException("Temperature slider missing.");
+            if (!slider.Focus(FocusState.Keyboard)) throw new InvalidOperationException("Could not focus temperature.");
+            slider.Value = 2900;
+            session.AdjustLight(session.Preferences.Lights.Single(l => l.Id == "demo:light"), brightness: 100);
+        });
+        await Task.Delay(1200);
+        Windows.UI.Color warm = default;
+        await OnUI(() => { CheckFocus(); warm = Panel(); });
+        await OnUIAsync(() => CaptureAsync(popup, Path.Combine(directory, "studio-controls-warm.png")));
+        await OnUI(() => slider!.Value = 7000);
+        await Task.Delay(1200);
+        await OnUI(() =>
+        {
+            CheckFocus();
+            var cool = Panel();
+            if (cool.B <= warm.B || cool.R >= warm.R)
+                throw new InvalidOperationException("Confirmed warm and cool light states must tint the product panel differently.");
+            session.DemoLightDelayMilliseconds = 0;
+        });
+        await OnUIAsync(() => CaptureAsync(popup, Path.Combine(directory, "studio-controls-cool.png")));
+        await OnUI(() => Invoke(popup, "Power-demo:light"));
+        await Task.Delay(500);
     }
     private static async Task CheckAppearanceAndLayoutAsync(ReactorWindow window, ReactorWindow popup, AppSession session, string directory)
     {

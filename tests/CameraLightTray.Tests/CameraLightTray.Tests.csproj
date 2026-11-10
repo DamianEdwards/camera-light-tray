@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\..\src\CameraLightTray.App\Diagnostics\*.cs" Link="Diagnostics\%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\CameraLightTray.App\UI\LightPanelColor.cs" Link="LightPanelColor.cs" />
     <ProjectReference Include="..\..\src\CameraLightTray.Core\CameraLightTray.Core.csproj" />
     <Compile Include="..\..\src\CameraLightTray.App\Platform\MonitorClient.cs" Link="MonitorClient.cs" />
     <Compile Include="..\..\src\CameraLightTray.App\Platform\SensorMonitorRecovery.cs" Link="SensorMonitorRecovery.cs" />

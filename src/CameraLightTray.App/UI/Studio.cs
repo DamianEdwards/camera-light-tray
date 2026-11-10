@@ -55,6 +55,10 @@ internal static class StudioStyle
     internal static TextBlockElement Text(string text, double size = 13, string color = "#B2BCC6") =>
         TextBlock(text).FontSize(size).Foreground(Color(color)).TextWrapping().AutomationName(text);
     internal static Element Glyph(string glyph, double size = 18) => Icon(FontIcon(glyph, "Segoe Fluent Icons", size));
+    internal static Element PowerGlyph(string id, bool on) =>
+        (HighContrast ? Glyph("\uE7E8", 14).Width(20).Height(20) :
+            Svg($"Power.{(AppTheme.Dark ? "dark" : "light")}-{(on ? "on" : "off")}.svg", 20, 20))
+            .AutomationId("PowerGlyph-" + id).AccessibilityHidden();
     internal static Element Split(Element left, Element right) =>
         Grid([GridSize.Star(), GridSize.Auto], [GridSize.Auto], [
             left.Grid().VAlign(VerticalAlignment.Center),
@@ -96,7 +100,25 @@ internal static class StudioStyle
         if (HighContrast) return Glyph("\uE781", 32).Width(width).AutomationName(light.Name);
         string name = LightControls.Model(light) switch { LightModel.KeyLight => "KeyLight", LightModel.KeyLightAir => "KeyLightAir", _ => "UnknownLight" };
         string state = light.Tls || !observation.Fresh ? "unknown" : observation.State!.On == 1 ? "on" : "off";
-        return Svg($"{name}.{state}.svg", width, width * 180 / 160)
+        Element art = Svg($"{name}.{state}.svg", width, width * 180 / 160).AccessibilityHidden();
+        if (state == "on")
+        {
+            var panel = LightControls.Model(light) switch
+            {
+                LightModel.KeyLight => (X: 22d, Y: 27d, W: 116d, H: 70d, R: 7d),
+                LightModel.KeyLightAir => (X: 44d, Y: 19d, W: 72d, H: 72d, R: 8d),
+                _ => (X: 34d, Y: 30d, W: 92d, H: 73d, R: 12d)
+            };
+            double scale = width / 160;
+            art = Grid([GridSize.Star()], [GridSize.Star()], [
+                art.Grid(),
+                Border(null).Width(panel.W * scale).Height(panel.H * scale).CornerRadius(panel.R * scale)
+                    .Background(LightPanelColor.FromReadback(observation.State!))
+                    .HAlign(HorizontalAlignment.Left).VAlign(VerticalAlignment.Top).Margin(panel.X * scale, panel.Y * scale, 0, 0)
+                    .AutomationId("LightPanel-" + light.Id).Grid()
+            ]).Width(width).Height(width * 180 / 160);
+        }
+        return art.AutomationId("LightArt-" + light.Id)
             .AutomationName($"{light.Name}: {(state == "unknown" ? "power unknown" : state)}");
     }
     internal static ImageElement Svg(string file, double width, double height)
@@ -120,21 +142,25 @@ internal sealed class Studio(AppSession session) : Component
         }, session);
         var settings = session.Preferences;
         void Settings() => session.OpenSettings?.Invoke();
-        return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto], [
-            StudioStyle.Split(HStack(10, StudioStyle.Svg("AppIcon.svg", 25, 25).AccessibilityHidden(),
+        var header = UseMemo(() => StudioStyle.Split(HStack(10, StudioStyle.Svg("AppIcon.svg", 25, 25).AccessibilityHidden(),
                 StudioStyle.Text(session.Demo ? "Camera Light Tray · Demo" : "Camera Light Tray", 15, "#F0F3F5").SemiBold().VAlign(VerticalAlignment.Center)),
-                Button(StudioStyle.Glyph("\uE713"), Settings).AutomationName("Open settings").AutomationId("OpenSettings")
+                Button(StudioStyle.Glyph("\uE713"), () => session.OpenSettings?.Invoke()).AutomationName("Open settings").AutomationId("OpenSettings")
                     .Width(34).Height(34).Padding(6).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0))
                 .Padding(18, 12).Grid(),
+            AppTheme.Element, StudioStyle.HighContrast);
+        var pause = UseMemo(() => Button(session.Mode == ManualMode.Paused ? "Resume" : "Pause",
+                () => session.SetMode(session.Mode == ManualMode.Paused ? ManualMode.Automatic : ManualMode.Paused))
+                .FontSize(11).AutomationName("Pause or resume automation").AutomationId("PauseAutomation"),
+            session.Mode, AppTheme.Element, StudioStyle.HighContrast);
+        return Grid([GridSize.Star()], [GridSize.Auto, GridSize.Auto, GridSize.Star(), GridSize.Auto], [
+            header,
             VStack(10,
                 StudioStyle.Line(),
                 StudioStyle.Split(VStack(4,
                     StudioStyle.Text(session.ActivityTitle, 13, session.ActivityTitle == "Camera state unknown" ? "#EDC381" : "#F0F3F5").SemiBold()
                         .AutomationId("ActivityTitle"),
                     StudioStyle.Text(session.ActivityContext, 11)),
-                    Button(session.Mode == ManualMode.Paused ? "Resume" : "Pause",
-                        () => session.SetMode(session.Mode == ManualMode.Paused ? ManualMode.Automatic : ManualMode.Paused))
-                        .FontSize(11).AutomationName("Pause or resume automation").AutomationId("PauseAutomation"))
+                    pause)
                     .Padding(18, 0),
                 !settings.AutomationEnabled ? Button("Enable automation", () => session.Enable(true)).AutomationId("TrayEnable").Margin(18, 0) : null,
                 !string.IsNullOrEmpty(session.Error) ? StudioStyle.Text(session.Error, 11, "#EDC381").Margin(18, 0) : null,
@@ -176,6 +202,14 @@ internal sealed class StudioLight : Component<StudioLightProps>
         var (kelvin, setKelvin) = UseState(observation.State is { } current ?
             (int)(Math.Round(LightControls.Kelvin(current.Temperature) / 100d) * 100) : 4900);
         bool editing = session.IsEditing(light.Id);
+        bool on = fresh && observation.State!.On == 1;
+        var powerButton = UseMemo(() => Button(StudioStyle.PowerGlyph(light.Id, on), () => session.Run(() => session.ToggleLightAsync(light)))
+                .Width(36).Height(36).Padding(8).CornerRadius(7)
+                .Background(StudioStyle.Color(on ? "#A9CADF" : "#30353C", true))
+                .Foreground(StudioStyle.Color(on ? "#183345" : "#B2BCC6"))
+                .AutomationName(fresh ? $"Turn {light.Name} {(on ? "off" : "on")}" : $"{light.Name}: power unknown")
+                .AutomationId("Power-" + light.Id).IsEnabled(fresh && !session.Busy).Grid(column: 2).VAlign(VerticalAlignment.Center),
+            light, fresh, on, session.Busy, AppTheme.Element, StudioStyle.HighContrast);
         UseEffect(() =>
         {
             if (editing || observation.State is not { } state) return;
@@ -193,14 +227,17 @@ internal sealed class StudioLight : Component<StudioLightProps>
                 {
                     int next = (int)Math.Round(number);
                     changed(next);
-                    if (!fresh) return;
-                    if (label == "Brightness" && next != observation.State!.Brightness) session.AdjustLight(light, brightness: next);
-                    if (label == "Temperature" && next != (int)(Math.Round(LightControls.Kelvin(observation.State!.Temperature) / 100d) * 100))
+                    var latest = session.Observation(light.Id);
+                    if (!latest.Fresh) return;
+                    if (label == "Brightness" && next != latest.State!.Brightness) session.AdjustLight(light, brightness: next);
+                    if (label == "Temperature" && next != (int)(Math.Round(LightControls.Kelvin(latest.State!.Temperature) / 100d) * 100))
                         session.AdjustLight(light, kelvin: next);
                 }).IsEnabled(fresh && !session.Busy).AutomationName($"{light.Name} {label}").AutomationId(id)
                     .Set(slider =>
                     {
                         slider.StepFrequency = label == "Brightness" ? 1 : 100;
+                        slider.SmallChange = label == "Brightness" ? 1 : 100;
+                        slider.LargeChange = label == "Brightness" ? 10 : 500;
                         slider.IsThumbToolTipEnabled = false;
                         StudioStyle.SliderAppearance(slider, label == "Temperature");
                     }));
@@ -211,12 +248,7 @@ internal sealed class StudioLight : Component<StudioLightProps>
                 VStack(5, StudioStyle.Text(light.Name, 14, "#F0F3F5").SemiBold(),
                     StudioStyle.Text(power + " · " + (manual ? "Manual" : light.Enabled ? "Automatic" : "Not automated"), 11))
                     .VAlign(VerticalAlignment.Center).Grid(column: 1),
-                Button(StudioStyle.Glyph("\uE7E8"), () => session.Run(() => session.ToggleLightAsync(light)))
-                    .Width(36).Height(36).Padding(8).CornerRadius(7)
-                    .Background(StudioStyle.Color(fresh && observation.State!.On == 1 ? "#A9CADF" : "#30353C", true))
-                    .Foreground(StudioStyle.Color(fresh && observation.State!.On == 1 ? "#183345" : "#B2BCC6"))
-                    .AutomationName(fresh ? $"Turn {light.Name} {(observation.State!.On == 1 ? "off" : "on")}" : $"{light.Name}: power unknown")
-                    .AutomationId("Power-" + light.Id).IsEnabled(fresh && !session.Busy).Grid(column: 2).VAlign(VerticalAlignment.Center)
+                powerButton
             ]),
             StudioStyle.Split(
                 ToggleSwitch(light.Enabled, value => session.SelectLight(light, value)).IsEnabled(!light.Tls)
@@ -230,11 +262,10 @@ internal sealed class StudioLight : Component<StudioLightProps>
                 manual ? Button("Resume auto", () => session.Run(() => session.ResumeLightAsync(light)))
                     .FontSize(11).AutomationId("Resume-" + light.Id).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0)
                     .Foreground(StudioStyle.Color("#A9CADF")) : Empty()),
-            Adjustment("Brightness", brightness, 0, 100, setBrightness, "Brightness-" + light.Id, "%"),
-            Adjustment("Temperature", kelvin, 2900, 7000, setKelvin, "Temperature-" + light.Id, " K"),
+            Adjustment("Brightness", brightness, 0, 100, setBrightness, "Brightness-" + light.Id, "%").WithKey("brightness"),
+            Adjustment("Temperature", kelvin, 2900, 7000, setKelvin, "Temperature-" + light.Id, " K").WithKey("temperature"),
             light.Tls ? StudioStyle.Text("This model uses TLS. Control is not supported yet.", 11, "#EDC381") :
-                !fresh ? StudioStyle.Text(observation.Error is null ? "Checking this light…" : "Reconnecting automatically. Other lights still work.", 11, "#EDC381") :
-                editing ? StudioStyle.Text("Applying adjustment…", 11) : null
+                !fresh ? StudioStyle.Text(observation.Error is null ? "Checking this light…" : "Reconnecting automatically. Other lights still work.", 11, "#EDC381") : null
         )).Padding(16, 12).BorderBrush(StudioStyle.Color("#434A53")).BorderThickness(bottom: 1).AutomationId("LightRow-" + light.Id);
     }
 }

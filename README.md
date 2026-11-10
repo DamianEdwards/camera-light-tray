@@ -90,6 +90,10 @@ records images, audio or video. The app sends no telemetry.
   lost acknowledgments retain recovery intent, and displayed confirmed edits
   require matching device readback. Temperature controls use Kelvin, converted
   to the classic firmware's 143–344 mired range.
+- Slider edits coalesce for 250ms and run in the background without an applying
+  message or popup layout changes. Keyboard adjustments retain focus; replacing
+  an in-flight edit does not mark the light unreachable. Product-panel tint and
+  intensity follow confirmed light readbacks, not pending slider requests.
 - An optional experimental fixed-function LocalService ETW helper and local
   authenticated IPC remain available for diagnostics and installed-service CI.
   **The UI uses normal-user sensor reports, not this legacy helper.**
@@ -271,8 +275,8 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.11
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.11\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.12
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.12\CameraLightTray.exe
 ```
 
 On a Windows 11 desktop, the native test executable also supports a real,

@@ -10,7 +10,6 @@ colors:
   studio-accent: "#A9CADF"
   studio-accent-ink: "#183345"
   studio-warning: "#EDC381"
-  panel-lit: "#FFF0CB"
   settings-surface: "#FBFCFD"
   settings-navigation: "#F0F3F6"
   settings-selected: "#DFE9F1"
@@ -53,7 +52,7 @@ Root `DESIGN.md` and `design-system.json` describe native Studio. The three comp
 - **Primary:** muted Studio blue marks known-on power buttons, enabled flyout automation switches and text actions; accent ink contrasts the on button.
 - **Neutral:** charcoal surface, raised power controls, fine dividers, light primary text and muted labels establish the flyout hierarchy.
 - **Settings:** shared light/dark semantic surfaces, a tinted selected page and app-selection summary; ordinary controls inherit the selected native theme. Light uses the existing pale surfaces with dark text; Dark uses the Studio charcoal palette.
-- **States:** warning text accompanies unknown camera/light state and errors. Warm lit panels use the fixed SVG fill, not a temperature- or brightness-derived measurement.
+- **States:** warning text accompanies unknown camera/light state and errors. Lit product panels use illustrative warm-to-cool white points and intensity derived only from confirmed physical temperature/brightness readbacks. Off panels remain unlit; stale/TLS observations remain unknown. This is not a calibrated photometric simulation.
 - Slider track gradients and thumb brushes are recorded in the JSON extension. High contrast substitutes system foreground/background and removes custom toggle/slider brushes.
 
 ## Typography
@@ -90,7 +89,9 @@ Each model has on/off/unknown art; unknown has a question badge. Unrecognized pr
 ## Components
 
 - **Power and Auto:** physical power text/art/button state is independent of automation selection. The per-light Auto switch uses its intrinsic WinUI size and built-in content label; TLS models cannot be selected for control. Do not reduce the template's natural height to compact the layout.
+- **Interaction stability:** memoized settings/power button subtrees preserve native hover across background renders. The power symbol is an original SVG with a padded view box and round strokes, not a font glyph with a cropped baseline; high contrast uses a smaller native system-colored glyph.
 - **Adjustments:** brightness 0–100, step 1; temperature 2,900–7,000 K, step 100. Native sliders keep their intrinsic template height, thumb tooltips disabled, labels/values always visible. Hover, thumbs and tracks must fit their controls; complete normal light rows must fit above the footer. Stale/TLS controls are disabled; readings say last known, Not read or Unavailable.
+- **Pending edits:** slider intent coalesces for 250ms and applies on a background task without an applying label, control replacement or layout shift. Superseded request cancellation is not a connectivity failure. Keyboard focus stays on the current slider; native SmallChange is 1% / 100 K.
 - **Manual ownership:** power/slider edits serialize with automation and put that light in manual override without changing untouched fields. Automation does not fight the edit; **Resume auto** returns control, and activation completion ends the override. Manual edits are not rolled back at call end.
 - **Readback:** physical readbacks are authoritative; optimistic artwork never asserts confirmed power. Unknown camera activity holds owned lights rather than becoming idle/off. Unreachable lights disclose reconnection while other lights remain usable.
 - **Triggers:** no selected apps means no automatic activation. Suggestions never grant permission. **All cameras** is explicit; preview camera selection is independent. Newly discovered lights remain opted out.

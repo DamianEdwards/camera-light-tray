@@ -34,6 +34,9 @@ internal sealed class AppSession
     private readonly CancellationTokenSource _stop = new();
     private readonly LightAutomation _automation;
     private readonly ILightTransport _transport;
+    private readonly DemoLights? _demoLights;
+    internal int DemoLightDelayMilliseconds { get; set; }
+    internal int DemoLightWriteCount => _demoLights?.Writes ?? 0;
     private readonly AutomationDecision _decision = new();
     private Settings _settings;
     private MonitorSnapshot? _snapshot;
@@ -161,7 +164,8 @@ internal sealed class AppSession
         _settings.Validate();
         ActivationInput = _settings.ActivationMilliseconds.ToString();
         LeaveInput = _settings.LeaveMilliseconds.ToString();
-        _transport = new LoggingLightTransport(demo ? new DemoLights() : new ElgatoTransport(),
+        _demoLights = demo ? new(() => DemoLightDelayMilliseconds) : null;
+        _transport = new LoggingLightTransport(_demoLights is not null ? _demoLights : new ElgatoTransport(),
             logging.CreateLogger<LoggingLightTransport>());
         _automation = new(_transport, journal =>
         {
@@ -704,7 +708,7 @@ internal sealed class AppSession
             stop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             _edits[light.Id] = (brightness ?? previous.Brightness, kelvin ?? previous.Kelvin, stop);
             _editing.RemoveAll(task => task.IsCompleted);
-            _editing.Add(ApplyLightEditAsync(light, stop));
+            _editing.Add(Task.Run(() => ApplyLightEditAsync(light, stop)));
         }
         Notify();
     }
@@ -742,6 +746,7 @@ internal sealed class AppSession
     {
         using var operation = _log.BeginScope("operation=manual-adjust");
         try { return await _automation.AdjustAsync(light, on, brightness, kelvin, token); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             lock (_gate) _observations[light.Id] = Observation(light.Id) with { Error = ex.Message };
@@ -967,12 +972,21 @@ internal sealed class AppSession
         }
         _log.LogInformation("Session stopped; owned lights restored");
     }
-    private sealed class DemoLights : ILightTransport
+    private sealed class DemoLights(Func<int> delay) : ILightTransport
     {
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, LightState> _states = new();
-        public Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken) =>
-            Task.FromResult(_states.GetOrAdd(device.Id, new LightState(0, 26, 205)));
-        public Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken)
-        { _states[device.Id] = state; return Task.CompletedTask; }
+        private int _writes;
+        internal int Writes => Volatile.Read(ref _writes);
+        public async Task<LightState> ReadAsync(LightDevice device, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay(), cancellationToken);
+            return _states.GetOrAdd(device.Id, new LightState(0, 26, 205));
+        }
+        public async Task WriteAsync(LightDevice device, LightState state, CancellationToken cancellationToken)
+        {
+            await Task.Delay(delay(), cancellationToken);
+            _states[device.Id] = state;
+            Interlocked.Increment(ref _writes);
+        }
     }
 }

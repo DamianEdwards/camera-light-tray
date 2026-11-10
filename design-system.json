@@ -23,7 +23,10 @@
         "thumbBackground": "#A9BECD",
         "thumbBorder": "#EBF1F5",
         "valueFillOpacity": 0,
-        "thumbToolTip": false
+        "thumbToolTip": false,
+        "debounceMs": 250,
+        "pendingFeedback": "No applying label or layout shift; maintain keyboard focus",
+        "execution": "Background async; intentional cancellation does not invalidate readback health"
       },
       "equipment": {
         "models": ["KeyLight", "KeyLightAir", "UnknownLight"],
@@ -31,12 +34,14 @@
         "width": 58,
         "height": 65.25,
         "unknownWhen": "TLS model or non-fresh observation",
+        "litPanel": "Illustrative intensity and warm/cool tint from confirmed physical brightness/temperature only",
         "highContrast": "Native glyph replaces SVG"
       },
       "accessibility": "Native keyboard controls and automation names; system HC colors; custom toggle/slider brushes removed in HC.",
       "appearance": { "preference": "General / Appearance", "options": ["System", "Light", "Dark"], "default": "System", "scope": "Both windows; live OS app-color changes" },
       "sections": "Visible everyday sections; technical details on Diagnostics; no expanding regions.",
       "navigation": "Memoized by page/theme; native hover survives background updates.",
+      "popupButtons": "Memoized by relevant visual state/theme; native hover survives background updates; padded original power SVG",
       "manualControl": "Serialized per-light edits; preserve untouched fields; Resume auto or activation completion ends override; physical readbacks confirm state.",
       "triggerSelection": "No selected apps means no automatic activation; explicit All cameras; suggestions and new lights never opt in automatically.",
       "evidence": {
