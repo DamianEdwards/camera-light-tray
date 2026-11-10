@@ -8,6 +8,12 @@ using CameraLightTray.App.Platform;
 using CameraLightTray.Tests;
 using CameraLightTray.Core;
 
+if (args is ["--logging-check"])
+{
+    Console.WriteLine($"{await LoggingChecks.RunAsync()} logging tests passed.");
+    return;
+}
+
 if (args is ["--sensor-recovery-check", var sensorResultPath])
 {
     if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
@@ -755,6 +761,7 @@ if (OperatingSystem.IsWindows())
     passed++; Console.WriteLine("PASS stalled helper reports heartbeat timeout separately from setup failure and shutdown");
 }
 passed += await StudioChecks.RunAsync();
+passed += await LoggingChecks.RunAsync();
 Console.WriteLine($"{passed} tests passed.");
 
 internal sealed class FakeLights : ILightTransport

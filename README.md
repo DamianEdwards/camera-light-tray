@@ -144,6 +144,43 @@ login launches the UI hidden and never invokes setup or UAC. Leave the app in
 its stable location when enabling login startup. Disable that preference
 before moving/removing the UI.
 
+### Local diagnostic logs
+
+The UI writes local `ILogger` diagnostic files under the existing storage folder:
+`%LOCALAPPDATA%\CameraLightTray\logs\camera-light-tray-yyyy-MM-dd-0001.log`.
+With `--data-dir`, logs go under that directory's `logs` subfolder instead.
+There is no preference migration and no new folder under the user profile.
+
+Logs are UTF-8 text with UTC timestamps, severity, category, process/thread IDs,
+operation scopes, structured fields and exception details. Files roll at **UTC
+midnight** or **5 MiB**, whichever comes first. At most **20 files / 100 MiB**
+are retained, with a **14-day age limit**; cleanup runs when opening/rotating a
+log. Restarts append rather than overwrite. Only this provider's named files
+are removed. Records larger than 64 KiB are explicitly marked as truncated.
+
+Logging uses a bounded background queue, not disk writes on the UI or native
+camera callback thread. Normal shutdown drains the queue. A full queue or
+failed file write surfaces a diagnostic warning in the UI; loss counts and
+write recovery are recorded once writing succeeds. A forced kill/power loss
+can lose queued entries.
+
+The logs cover startup/shutdown, settings changes, preview, discovery and
+connection errors, sensor report changes/retries/one-minute renewal, process
+catalog and slow camera-enumeration timing, lighting decisions, manual changes,
+write acknowledgments/readback changes and ownership/restoration. Unchanged
+polls are not logged. Sensor heartbeat summaries are recorded every 30 seconds.
+Activity transitions include a reason such as `healthy-idle`, `sensor-unhealthy`,
+`snapshot-unavailable` or `snapshot-stale`, along with snapshot/callback/catalog
+ages, source epoch and the current monitoring operation. This distinguishes
+a four-second freshness timeout from a genuine sensor-health change.
+
+Logs stay local and are **not uploaded**. Camera/device/interface identities are
+represented by stable short hashes; process IDs, friendly light names and
+exception messages may still contain private machine or network details.
+Review/redact logs before sharing, and do not attach them to a public issue
+without checking their contents. The optional legacy helper is not the active
+UI camera source and does not write into the user's log directory.
+
 ### Optional legacy ETW helper: setup, repair and removal
 
 **Skip this section for normal use.** The helper is not needed by, or connected
@@ -217,8 +254,8 @@ not for the pure-core tests.
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --demo --data-dir .\artifacts\demo-data
-.\tools\package.ps1 -Version 0.1.9
-.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.9\CameraLightTray.exe
+.\tools\package.ps1 -Version 0.1.10
+.\tools\smoke.ps1 -Executable .\artifacts\package-0.1.10\CameraLightTray.exe
 ```
 
 On a Windows 11 desktop, the native test executable also supports a real,

@@ -18,6 +18,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Content Include="Assets\*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.12" />
     <ProjectReference Include="..\CameraLightTray.Core\CameraLightTray.Core.csproj" />
     <Compile Include="..\CameraLightTray.Monitor\ProcessCatalog.cs" Link="Platform\ProcessCatalog.cs" />
     <PackageReference Include="Microsoft.WindowsAppSDK.DWrite" Version="2.1.0" />

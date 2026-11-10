@@ -10,6 +10,9 @@ using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System.Runtime.InteropServices.WindowsRuntime;
+using CameraLightTray.App.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace CameraLightTray.App;
 
@@ -31,17 +34,33 @@ internal static class Program
         if ((isolated || demo) && string.IsNullOrWhiteSpace(explicitDirectory))
         { Tray.MessageBox(0, "Isolated/demo/smoke runs require --data-dir <separate-directory>.", "Camera Light Tray", 0x10); return 1; }
         string directory = explicitDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CameraLightTray");
-        Directory.CreateDirectory(directory);
         ReactorWindow? window = null;
         ReactorWindow? flyout = null;
         Tray? tray = null;
         AppSession? session = null;
         bool exiting = false;
         int exitCode = 0;
+        ILoggerFactory? logging = null;
+        ILogger log = NullLogger.Instance;
+        string? loggingFailure = null;
         try
         {
+            Directory.CreateDirectory(directory);
             using var instance = new FileStream(Path.Combine(directory, "instance.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            session = new(new(directory), isolated, demo);
+            var provider = new FileLoggerProvider(Path.Combine(directory, "logs"), failure =>
+            {
+                Interlocked.Exchange(ref loggingFailure, failure);
+                if (failure is not null) Console.Error.WriteLine(failure);
+                ReactorApp.UIDispatcher?.TryEnqueue(() => session?.SetLoggingFailure(failure));
+            });
+            logging = new LoggerFactory();
+            logging.AddProvider(provider);
+            log = logging.CreateLogger("CameraLightTray.Lifecycle");
+            AppSession.DispatchLog = log;
+            log.LogInformation("Application starting; version={Version}, runtime={Runtime}, isolated={Isolated}, demo={Demo}",
+                System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(Program).Assembly)?.InformationalVersion,
+                System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription, isolated, demo);
+            session = new(new(directory), isolated, demo, logging);
             ReactorApp.ShutdownPolicy = ShutdownPolicy.Explicit;
             ReactorApp.Run(context =>
             {
@@ -124,6 +143,7 @@ internal static class Program
                     try { await session.StopAsync(); }
                     catch (Exception ex)
                     {
+                        log.LogError(ex, "Application shutdown failed");
                         File.WriteAllText(Path.Combine(directory, "shutdown-error.txt"), ex.Message);
                         exitCode = 1;
                         if (!smoke) Tray.MessageBox(0, "Some owned light states could not be restored. Recovery is retained for next launch.\n" + ex.Message,
@@ -133,6 +153,7 @@ internal static class Program
                 }
                 Application.Current.UnhandledException += (_, e) =>
                 {
+                    log.LogError(e.Exception, "Unhandled UI operation exception");
                     session.Report("UI operation failed: " + e.Exception.Message);
                     e.Handled = true;
                     if (smoke)
@@ -144,6 +165,7 @@ internal static class Program
                 tray = new(TrayClicked, () => session.SetMode(session.Mode == ManualMode.Paused ? ManualMode.Automatic : ManualMode.Paused),
                     Exit, session.Report);
                 tray.Resumed += session.Resume;
+                session.SetLoggingFailure(Volatile.Read(ref loggingFailure));
                 session.Start();
                 if (smoke || args.Contains("--settings")) ShowSettings();
                 else if (!args.Contains("--startup")) ShowFlyout();
@@ -153,11 +175,19 @@ internal static class Program
         }
         catch (Exception ex)
         {
+            exitCode = 1;
+            log.LogCritical(ex, "Application failed");
             if (smoke) File.WriteAllText(Path.Combine(directory, "smoke-result.txt"), "FAIL: " + ex);
             else Tray.MessageBox(0, ex.Message, "Camera Light Tray could not start", 0x10);
             return 1;
         }
-        finally { tray?.Dispose(); }
+        finally
+        {
+            tray?.Dispose();
+            log.LogInformation("Application stopped; exitCode={ExitCode}", exitCode);
+            AppSession.DispatchLog = NullLogger.Instance;
+            logging?.Dispose();
+        }
     }
 
     private static async Task SmokeAsync(ReactorWindow window, Func<ReactorWindow> showFlyout, Tray tray, AppSession session, string directory, Action<int> finish)
