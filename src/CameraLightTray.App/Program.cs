@@ -373,9 +373,26 @@ internal static class Program
                     throw new InvalidOperationException("Both windows must use the same selected appearance.");
                 if (session.Preferences.Appearance != mode)
                     throw new InvalidOperationException("Appearance preference did not persist.");
+                CheckSettingsToggle(window, "StartupEnabled", "Appearance");
             });
             if (mode != AppearanceMode.System)
             {
+                await OnUI(() => Invoke(window, "OpenRules"));
+                await Task.Delay(200);
+                foreach (bool enabled in new[] { false, true })
+                {
+                    await OnUI(() =>
+                    {
+                        var toggle = Find(window.NativeWindow.Content, "AutomationEnabled") as ToggleSwitch ??
+                            throw new InvalidOperationException("Automation toggle missing.");
+                        toggle.IsOn = enabled;
+                    });
+                    await Task.Delay(200);
+                    await OnUI(() => CheckSettingsToggle(window, "AutomationEnabled", "ActivationDelay"));
+                }
+                await OnUIAsync(() => CaptureAsync(window, Path.Combine(directory, $"settings-automation-{mode.ToString().ToLowerInvariant()}.png")));
+                await OnUI(() => Invoke(window, "OpenGeneral"));
+                await Task.Delay(200);
                 await OnUI(() =>
                 {
                     foreach (var light in session.Preferences.Lights)
@@ -439,6 +456,24 @@ internal static class Program
         yield return root;
         for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
             foreach (var child in Descendants(VisualTreeHelper.GetChild(root, i))) yield return child;
+    }
+    private static void CheckSettingsToggle(ReactorWindow window, string id, string alignedWith)
+    {
+        var root = window.NativeWindow.Content;
+        var toggle = Find(root, id) as ToggleSwitch ?? throw new InvalidOperationException("Settings toggle missing: " + id);
+        var reference = Find(root, alignedWith) as FrameworkElement ?? throw new InvalidOperationException("Settings alignment reference missing.");
+        var label = Descendants(toggle).OfType<FrameworkElement>()
+            .FirstOrDefault(element => element.Name == (toggle.IsOn ? "OnContentPresenter" : "OffContentPresenter")) ??
+            throw new InvalidOperationException("Native toggle state label missing.");
+        var bounds = label.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, label.ActualWidth, label.ActualHeight));
+        var referenceBounds = reference.TransformToVisual(root).TransformBounds(new Windows.Foundation.Rect(0, 0, reference.ActualWidth, reference.ActualHeight));
+        if (Math.Abs(bounds.Right - referenceBounds.Right) > 1)
+            throw new InvalidOperationException($"Settings toggle must visibly align with the other row controls: {id} right={bounds.Right:0.##}; reference={referenceBounds.Right:0.##}.");
+        var track = Descendants(toggle).OfType<FrameworkElement>().FirstOrDefault(element => element.Name == "OuterBorder") ??
+            throw new InvalidOperationException("Native toggle track missing.");
+        var trackBounds = track.TransformToVisual(toggle).TransformBounds(new Windows.Foundation.Rect(0, 0, track.ActualWidth, track.ActualHeight));
+        if (trackBounds.Y < -0.5 || trackBounds.Bottom > toggle.ActualHeight + 0.5)
+            throw new InvalidOperationException("Right-aligned settings switches must retain their native height.");
     }
     private static void CheckPopupParts(ReactorWindow window, AppSession session)
     {

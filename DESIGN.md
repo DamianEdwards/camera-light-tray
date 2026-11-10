@@ -70,6 +70,7 @@ Native TextBlocks wrap and receive automation names; values retain `%` and `K`, 
 - Header padding is 18 × 12; equipment rows 16 × 12 with a 6-DIP stack gap. Row headings use 68 / flexible / auto columns; art is 58 × 65.25 DIP.
 - Settings request 940 × 780 DIP, minimum 620 × 500; a fixed 180-DIP navigation rail accompanies scrolling content padded 32 × 28. Rail padding is 12 × 24.
 - All row content and actions align on their vertical centers. Horizontal scrolling is disabled and the vertical gutter is reserved, so long technical content cannot widen unrelated rows.
+- Settings switches use content-sized widths and right-aligned state labels, sharing the trailing edge of the other row controls in both On and Off states. Their native template height is unchanged.
 - The navigation element tree is memoized by page/theme only. Native hover state must survive background updates; repeated monitoring or readback notifications must not rebuild its button content.
 - A page change creates a fresh page/scroller identity and starts at vertical offset zero, including when returning to a page. Live updates and theme changes preserve the current page's scroll position.
 - Apps and trigger-camera selections have empty visual labels, descriptive automation names and 44 × 44-DIP targets, including minimum size; Apps uses a trailing action column.

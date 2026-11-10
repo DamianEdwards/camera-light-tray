@@ -186,7 +186,8 @@ internal sealed class DashboardPage : Component<DashboardPageProps>
             Row(VStack(4, Copy($"{settings.Lights.Count(l => l.Enabled && !l.Tls)} lights set to auto").SemiBold(),
                 Description("Previous light states are preserved")), Button("Edit", () => Navigate(3))),
             Row(VStack(4, Copy("Enable automation").SemiBold(), Description("No selected apps means no automatic activation.")),
-                ToggleSwitch(settings.AutomationEnabled, session.Enable).AutomationName("Enable automation").AutomationId("AutomationEnabled")),
+                ToggleSwitch(settings.AutomationEnabled, session.Enable).MinWidth(0).HAlign(HorizontalAlignment.Right)
+                    .HorizontalContentAlignment(HorizontalAlignment.Right).AutomationName("Enable automation").AutomationId("AutomationEnabled")),
             Row(VStack(4, Copy("Ignore brief camera checks").SemiBold(), Description("Delay before turning lights on, in milliseconds.")),
                 TextBox(session.ActivationInput, value => session.ActivationInput = value).Width(100).AutomationName("Activation debounce").AutomationId("ActivationDelay")),
             Row(VStack(4, Copy("Keep lights on after capture stops").SemiBold(), Description("Leave grace, in milliseconds.")),
@@ -206,7 +207,9 @@ internal sealed class DashboardPage : Component<DashboardPageProps>
             ComboBox(["System", "Light", "Dark"], (int)session.Preferences.Appearance,
                 index => session.SetAppearance((AppearanceMode)index)).Width(170).AutomationName("Appearance").AutomationId("Appearance")),
         Row(VStack(4, Copy("Start at sign-in").SemiBold(), Description("Start quietly in the tray. No administrator prompt.")),
-            ToggleSwitch(session.Preferences.StartAtLogin, session.SetStartup).AutomationName("Start at sign-in").IsEnabled(!session.Isolated && !session.Demo)),
+            ToggleSwitch(session.Preferences.StartAtLogin, session.SetStartup).MinWidth(0).HAlign(HorizontalAlignment.Right)
+                .HorizontalContentAlignment(HorizontalAlignment.Right).AutomationName("Start at sign-in").AutomationId("StartupEnabled")
+                .IsEnabled(!session.Isolated && !session.Demo)),
         Row(VStack(4, Copy("When the window closes").SemiBold(), Description("Stay in the tray. Camera preview stops.")), Copy("Keep running", 12)),
         Section("Privacy", Description("Background monitoring reads camera activity metadata. Explicit preview stays local and never records or uploads frames. The application sends no telemetry."))
     );
