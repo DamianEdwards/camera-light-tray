@@ -387,6 +387,7 @@ internal static class Program
     {
         Button[] buttons = [];
         object[] content = [];
+        Windows.UI.Color[] painted = [];
         await OnUI(() =>
         {
             buttons = new[] { "OpenSettings", "Power-demo:light" }.Select(id =>
@@ -395,6 +396,12 @@ internal static class Program
             foreach (var button in buttons)
                 if (!VisualStateManager.GoToState(button, "PointerOver", false))
                     throw new InvalidOperationException("Popup hover state unavailable.");
+        });
+        await Task.Delay(150);
+        await OnUI(() =>
+        {
+            painted = buttons.Select(button => (ButtonPresenter(button).Background as SolidColorBrush ??
+                throw new InvalidOperationException("Button hover background is not a solid brush.")).Color).ToArray();
             for (int i = 0; i < 20; i++) session.Notify();
         });
         await Task.Delay(350);
@@ -402,17 +409,34 @@ internal static class Program
         {
             for (int i = 0; i < buttons.Length; i++)
                 if (!ReferenceEquals(buttons[i].Content, content[i]) ||
+                    (ButtonPresenter(buttons[i]).Background as SolidColorBrush)?.Color != painted[i] ||
                     !Descendants(buttons[i]).OfType<FrameworkElement>()
                         .SelectMany(VisualStateManager.GetVisualStateGroups)
                         .Any(group => group.Name == "CommonStates" && group.CurrentState?.Name == "PointerOver"))
                     throw new InvalidOperationException("Background updates reset popup button content or hover state.");
             var powerIcon = Find(buttons[1], "PowerGlyph-demo:light") as Image;
             if (powerIcon?.Source is not Microsoft.UI.Xaml.Media.Imaging.SvgImageSource ||
-                powerIcon.ActualWidth < 20 || powerIcon.ActualHeight < 20)
+                powerIcon.ActualWidth < 20 || powerIcon.ActualHeight < 20 || powerIcon.IsHitTestVisible)
                 throw new InvalidOperationException("Power must use the fully contained vector icon, not a cropped font glyph.");
+            CheckButtonContentSlot(buttons[1], powerIcon);
             Invoke(popup, "Power-demo:light");
         });
         await Task.Delay(600);
+        await OnUI(() =>
+        {
+            var power = Find(popup.NativeWindow.Content, "Power-demo:light") as Button ??
+                throw new InvalidOperationException("Power button missing.");
+            VisualStateManager.GoToState(power, "PointerOver", false);
+        });
+        await Task.Delay(150);
+        await OnUI(() =>
+        {
+            var power = Find(popup.NativeWindow.Content, "Power-demo:light") as Button ??
+                throw new InvalidOperationException("Power button missing.");
+            CheckPowerButtonContrast(power);
+            CheckButtonContentSlot(power, Find(power, "PowerGlyph-demo:light") as FrameworkElement ??
+                throw new InvalidOperationException("Power icon missing."));
+        });
         Slider? slider = null;
         double height = 0;
         int writes = 0;
@@ -490,6 +514,35 @@ internal static class Program
         await OnUIAsync(() => CaptureAsync(popup, Path.Combine(directory, "studio-controls-cool.png")));
         await OnUI(() => Invoke(popup, "Power-demo:light"));
         await Task.Delay(500);
+    }
+    private static ContentPresenter ButtonPresenter(Button button) =>
+        Descendants(button).OfType<ContentPresenter>().FirstOrDefault(p => p.Name == "ContentPresenter") ??
+            throw new InvalidOperationException("Native button content presenter missing.");
+    private static void CheckPowerButtonContrast(Button button)
+    {
+        var background = (ButtonPresenter(button).Background as SolidColorBrush ??
+            throw new InvalidOperationException("Power hover background missing.")).Color;
+        byte[] rgb = Convert.FromHexString(StudioStyle.Color("#183345")[1..]);
+        var foreground = new Windows.UI.Color { A = 255, R = rgb[0], G = rgb[1], B = rgb[2] };
+        static double Luminance(Windows.UI.Color color)
+        {
+            static double Linear(byte value) => value / 255d <= 0.04045 ? value / 255d / 12.92 : Math.Pow((value / 255d + 0.055) / 1.055, 2.4);
+            return 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
+        }
+        double a = Luminance(background), b = Luminance(foreground);
+        if ((Math.Max(a, b) + 0.05) / (Math.Min(a, b) + 0.05) < 3)
+            throw new InvalidOperationException($"On-state power icon loses contrast against its actual painted hover background: background={background}, icon={foreground}, resource={(button.Resources["ButtonBackgroundPointerOver"] as SolidColorBrush)?.Color}.");
+    }
+    private static void CheckButtonContentSlot(Button button, FrameworkElement icon)
+    {
+        var presenter = ButtonPresenter(button);
+        var bounds = icon.TransformToVisual(presenter).TransformBounds(new Windows.Foundation.Rect(0, 0, icon.ActualWidth, icon.ActualHeight));
+        double left = presenter.Padding.Left + presenter.BorderThickness.Left;
+        double top = presenter.Padding.Top + presenter.BorderThickness.Top;
+        double right = presenter.ActualWidth - presenter.Padding.Right - presenter.BorderThickness.Right;
+        double bottom = presenter.ActualHeight - presenter.Padding.Bottom - presenter.BorderThickness.Bottom;
+        if (bounds.Left < left - 0.1 || bounds.Top < top - 0.1 || bounds.Right > right + 0.1 || bounds.Bottom > bottom + 0.1)
+            throw new InvalidOperationException($"Power icon exceeds its actual button content slot: icon={bounds}; slot={left},{top}..{right},{bottom}; padding={presenter.Padding}; border={presenter.BorderThickness}.");
     }
     private static async Task CheckAppearanceAndLayoutAsync(ReactorWindow window, ReactorWindow popup, AppSession session, string directory)
     {

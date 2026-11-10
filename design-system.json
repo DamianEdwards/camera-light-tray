@@ -41,7 +41,7 @@
       "appearance": { "preference": "General / Appearance", "options": ["System", "Light", "Dark"], "default": "System", "scope": "Both windows; live OS app-color changes" },
       "sections": "Visible everyday sections; technical details on Diagnostics; no expanding regions.",
       "navigation": "Memoized by page/theme; native hover survives background updates.",
-      "popupButtons": "Memoized by relevant visual state/theme; native hover survives background updates; padded original power SVG",
+      "popupButtons": "Memoized controls; stable owned native state brushes; 36-DIP power button with 6-DIP padding plus 1-DIP native border contains 20-DIP SVG",
       "manualControl": "Serialized per-light edits; preserve untouched fields; Resume auto or activation completion ends override; physical readbacks confirm state.",
       "triggerSelection": "No selected apps means no automatic activation; explicit All cameras; suggestions and new lights never opt in automatically.",
       "evidence": {

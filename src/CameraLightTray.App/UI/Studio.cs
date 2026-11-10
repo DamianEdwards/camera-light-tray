@@ -21,6 +21,13 @@ internal static class StudioStyle
     private static readonly Windows.UI.ViewManagement.UISettings UISettings = new();
     private sealed record AppliedTheme(bool Dark, bool HighContrast);
     private static readonly ConditionalWeakTable<FrameworkElement, AppliedTheme> Applied = new();
+    private sealed record AppliedButton(bool Dark, bool HighContrast, bool On, bool Settings);
+    private sealed class ButtonPaint
+    {
+        internal AppliedButton? Applied;
+        internal readonly Dictionary<string, SolidColorBrush> Brushes = [];
+    }
+    private static readonly ConditionalWeakTable<Microsoft.UI.Xaml.Controls.Button, ButtonPaint> Buttons = new();
     private static bool UpdateTheme(FrameworkElement element)
     {
         var current = new AppliedTheme(AppTheme.Dark, HighContrast);
@@ -54,7 +61,8 @@ internal static class StudioStyle
     }
     internal static TextBlockElement Text(string text, double size = 13, string color = "#B2BCC6") =>
         TextBlock(text).FontSize(size).Foreground(Color(color)).TextWrapping().AutomationName(text);
-    internal static Element Glyph(string glyph, double size = 18) => Icon(FontIcon(glyph, "Segoe Fluent Icons", size));
+    internal static Element Glyph(string glyph, double size = 18) => Icon(FontIcon(glyph, "Segoe Fluent Icons", size))
+        .Set(icon => icon.IsHitTestVisible = false);
     internal static Element PowerGlyph(string id, bool on) =>
         (HighContrast ? Glyph("\uE7E8", 14).Width(20).Height(20) :
             Svg($"Power.{(AppTheme.Dark ? "dark" : "light")}-{(on ? "on" : "off")}.svg", 20, 20))
@@ -65,6 +73,49 @@ internal static class StudioStyle
             right.Grid(column: 1).VAlign(VerticalAlignment.Center)]);
     internal static Element Line() => Border(null).Height(1).Background(Color("#434A53"));
     private static Windows.UI.Color Rgb(byte r, byte g, byte b) => new() { A = 255, R = r, G = g, B = b };
+    internal static void ButtonAppearance(Microsoft.UI.Xaml.Controls.Button button, bool on = false, bool settings = false)
+    {
+        var current = new AppliedButton(AppTheme.Dark, HighContrast, on, settings);
+        var paint = Buttons.GetValue(button, _ => new());
+        if (paint.Applied == current) return;
+        string[] states = ["", "PointerOver", "Pressed", "Disabled"];
+        string[] properties = ["ButtonBackground", "ButtonForeground", "ButtonBorderBrush"];
+        if (HighContrast)
+        {
+            foreach (string state in states)
+            foreach (string property in properties) button.Resources.Remove(property + state);
+            paint.Brushes.Clear();
+            paint.Applied = current;
+            return;
+        }
+        string[] background = settings ?
+            ["Transparent", Color("#30353C"), Color("#434A53"), "Transparent"] :
+            on ? AppTheme.Dark ? ["#A9CADF", "#BDDCEC", "#8FB6D0", "#829EAF"] :
+                ["#255F8C", "#2B6D9F", "#1D4F76", "#657F93"] :
+            AppTheme.Dark ? ["#30353C", "#414A55", "#4A5663", "#30353C"] :
+                ["#E9EEF2", "#D8E1E9", "#C9D5E0", "#E9EEF2"];
+        string foreground = Color(settings ? "#F0F3F5" : on ? "#183345" : "#B2BCC6");
+        static SolidColorBrush Brush(string color)
+        {
+            if (color == "Transparent") return new(new Windows.UI.Color());
+            byte[] rgb = Convert.FromHexString(color[1..]);
+            return new(Rgb(rgb[0], rgb[1], rgb[2]));
+        }
+        for (int i = 0; i < states.Length; i++)
+        {
+            SetBrush("ButtonBackground" + states[i], background[i]);
+            SetBrush("ButtonForeground" + states[i], foreground);
+            SetBrush("ButtonBorderBrush" + states[i], settings ? "Transparent" : Color("#434A53"));
+        }
+        paint.Applied = current;
+        void SetBrush(string key, string color)
+        {
+            var next = Brush(color);
+            // Native visual-state keyframes retain their resolved brush instances.
+            if (paint.Brushes.TryGetValue(key, out var existing)) existing.Color = next.Color;
+            else { paint.Brushes.Add(key, next); button.Resources[key] = next; }
+        }
+    }
     internal static void Accent(FrameworkElement element)
     {
         if (!UpdateTheme(element)) return;
@@ -125,7 +176,11 @@ internal static class StudioStyle
     {
         string path = Path.Combine(AppContext.BaseDirectory, "Assets", file);
         if (!Images.TryGetValue(file, out var source)) Images[file] = source = new SvgImageSource(new Uri(path));
-        return Image(path).AutomationName(file).Width(width).Height(height).Set(image => image.Source = source);
+        return Image(path).AutomationName(file).Width(width).Height(height).Set(image =>
+        {
+            image.Source = source;
+            image.IsHitTestVisible = false;
+        });
     }
 }
 
@@ -145,7 +200,8 @@ internal sealed class Studio(AppSession session) : Component
         var header = UseMemo(() => StudioStyle.Split(HStack(10, StudioStyle.Svg("AppIcon.svg", 25, 25).AccessibilityHidden(),
                 StudioStyle.Text(session.Demo ? "Camera Light Tray · Demo" : "Camera Light Tray", 15, "#F0F3F5").SemiBold().VAlign(VerticalAlignment.Center)),
                 Button(StudioStyle.Glyph("\uE713"), () => session.OpenSettings?.Invoke()).AutomationName("Open settings").AutomationId("OpenSettings")
-                    .Width(34).Height(34).Padding(6).Background(StudioStyle.Color("Transparent", true)).BorderThickness(0))
+                    .Width(34).Height(34).Padding(6).BorderThickness(0)
+                    .Set(button => StudioStyle.ButtonAppearance(button, settings: true)))
                 .Padding(18, 12).Grid(),
             AppTheme.Element, StudioStyle.HighContrast);
         var pause = UseMemo(() => Button(session.Mode == ManualMode.Paused ? "Resume" : "Pause",
@@ -204,9 +260,8 @@ internal sealed class StudioLight : Component<StudioLightProps>
         bool editing = session.IsEditing(light.Id);
         bool on = fresh && observation.State!.On == 1;
         var powerButton = UseMemo(() => Button(StudioStyle.PowerGlyph(light.Id, on), () => session.Run(() => session.ToggleLightAsync(light)))
-                .Width(36).Height(36).Padding(8).CornerRadius(7)
-                .Background(StudioStyle.Color(on ? "#A9CADF" : "#30353C", true))
-                .Foreground(StudioStyle.Color(on ? "#183345" : "#B2BCC6"))
+                .Width(36).Height(36).Padding(6).CornerRadius(7)
+                .Set(button => StudioStyle.ButtonAppearance(button, on))
                 .AutomationName(fresh ? $"Turn {light.Name} {(on ? "off" : "on")}" : $"{light.Name}: power unknown")
                 .AutomationId("Power-" + light.Id).IsEnabled(fresh && !session.Busy).Grid(column: 2).VAlign(VerticalAlignment.Center),
             light, fresh, on, session.Busy, AppTheme.Element, StudioStyle.HighContrast);

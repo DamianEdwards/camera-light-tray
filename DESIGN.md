@@ -28,8 +28,8 @@ spacing:
   inline: "8"
   content-stack: "12"
 components:
-  power-on: { backgroundColor: "{colors.studio-accent}", textColor: "{colors.studio-accent-ink}", rounded: "{rounded.power}", padding: "8", width: "36", height: "36" }
-  power-off: { backgroundColor: "{colors.studio-raised}", textColor: "{colors.studio-muted}", rounded: "{rounded.power}", padding: "8", width: "36", height: "36" }
+  power-on: { backgroundColor: "{colors.studio-accent}", textColor: "{colors.studio-accent-ink}", rounded: "{rounded.power}", padding: "6", width: "36", height: "36" }
+  power-off: { backgroundColor: "{colors.studio-raised}", textColor: "{colors.studio-muted}", rounded: "{rounded.power}", padding: "6", width: "36", height: "36" }
 ---
 
 # Design System: Camera Light Tray — Native Studio
@@ -90,6 +90,7 @@ Each model has on/off/unknown art; unknown has a question badge. Unrecognized pr
 
 - **Power and Auto:** physical power text/art/button state is independent of automation selection. The per-light Auto switch uses its intrinsic WinUI size and built-in content label; TLS models cannot be selected for control. Do not reduce the template's natural height to compact the layout.
 - **Interaction stability:** memoized settings/power button subtrees preserve native hover across background renders. The power symbol is an original SVG with a padded view box and round strokes, not a font glyph with a cropped baseline; high contrast uses a smaller native system-colored glyph.
+- **Button templates:** power buttons reserve the native 1-DIP border plus 6-DIP padding, leaving a 22-DIP content slot for the 20-DIP icon. Normal/PointerOver/Pressed/Disabled use per-control native theme brushes; on-state hover retains accent and icon contrast. Keep owned brush instances stable when their colors change, and never mutate shared system brushes. Verification checks actual template-slot containment and painted hover colors, not just outer bounds or visual-state names.
 - **Adjustments:** brightness 0–100, step 1; temperature 2,900–7,000 K, step 100. Native sliders keep their intrinsic template height, thumb tooltips disabled, labels/values always visible. Hover, thumbs and tracks must fit their controls; complete normal light rows must fit above the footer. Stale/TLS controls are disabled; readings say last known, Not read or Unavailable.
 - **Pending edits:** slider intent coalesces for 250ms and applies on a background task without an applying label, control replacement or layout shift. Superseded request cancellation is not a connectivity failure. Keyboard focus stays on the current slider; native SmallChange is 1% / 100 K.
 - **Manual ownership:** power/slider edits serialize with automation and put that light in manual override without changing untouched fields. Automation does not fight the edit; **Resume auto** returns control, and activation completion ends the override. Manual edits are not rolled back at call end.
