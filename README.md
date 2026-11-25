@@ -118,7 +118,8 @@ a stable release.
    legacy helper to fix a sensor-report or light-networking problem.
 3. In **Apps**, select apps such as Windows Camera, Teams or Signal.
    In **Cameras**, choose All cameras or select specific trigger cameras.
-   No selected **apps** means no automatic activation, not any app.
+   The built-in preview is always included; other apps must be selected.
+   No selection does **not** enable every app.
    In **Lights**, choose your physical LAN interface, discover lights, test
    connections (read only), and select the lights to automate.
 4. In **Automation** (or the tray flyout), explicitly enable automation. Open a selected
@@ -126,11 +127,12 @@ a stable release.
    their previous state after capture stops plus leave grace.
 
 For a visible verification, use **Cameras / Local camera preview**, choose the same camera,
-and press **Start preview**. Preview alone does not grant automation permission:
-select this exact `CameraLightTray.exe` under Apps if you want its preview to
-trigger lights. Alternatively, leave it unselected and watch another selected
-app's activation/release while the preview stays live. Desktop app identities
-include their full path, so moving a portable build requires reselecting it.
+and press **Start preview**. The built-in preview automatically triggers selected
+lights when automation is enabled and the preview camera is monitored; there is
+no need to select `CameraLightTray.exe` under Apps. This uses actual sensor reports
+for the currently running process, independent of its executable path. Moving
+the app or running it from source does not require reselecting its preview.
+Other desktop app identities still include their full executable path.
 Camera access must be allowed in Windows privacy settings. A failed or
 unavailable camera reports an explicit preview error; it never starts recording.
 
@@ -292,6 +294,12 @@ then requires automatic disposal/recreation and two fresh healthy sensor and
 own-process identity snapshots. It does not open a camera, change a light,
 install a helper, or request elevation. Windows Server is not a supported
 platform for the sensor API, so this check is separate from hosted service CI.
+
+The built-in preview is a runtime-only trigger: it does not add an executable
+path to saved app selections or enable automation. Main automation/pause settings,
+trigger-camera filters, selected lights, debounce, leave grace, and conservative
+unknown-state handling still apply. Another app instance is not implicitly enabled
+merely because it uses the same name or executable path.
 
 `--isolated` requires a separate data directory, disables setup and login
 registration, and starts automation off even if that directory previously

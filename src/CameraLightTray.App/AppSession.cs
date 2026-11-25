@@ -113,7 +113,7 @@ internal sealed class AppSession
     {
         get
         {
-            lock (_gate) return ActivityStatus.Evaluate(_settings, _snapshot, Mode, DateTimeOffset.UtcNow).Title;
+            lock (_gate) return ActivityStatus.Evaluate(PreviewTrigger.Include(_settings), _snapshot, Mode, DateTimeOffset.UtcNow).Title;
         }
     }
     internal string ActivityContext
@@ -121,13 +121,14 @@ internal sealed class AppSession
         get
         {
             var settings = Preferences;
-            if (!settings.Apps.Any(a => a.Enabled)) return "No selected apps will trigger lighting";
             lock (_gate)
             {
+                var triggers = PreviewTrigger.Include(settings);
                 var active = _snapshot?.Apps.Where(a => a.Status == CameraStatus.Active &&
-                    settings.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))).Select(a => a.Name).ToArray() ?? [];
+                    triggers.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))).Select(a => a.Name).ToArray() ?? [];
                 int count = settings.Apps.Count(a => a.Enabled);
-                return active.Length > 0 ? string.Join(", ", active) : $"{count} selected {(count == 1 ? "app" : "apps")} · " +
+                return active.Length > 0 ? string.Join(", ", active) :
+                    (count == 0 ? "Built-in preview" : $"{count} selected {(count == 1 ? "app" : "apps")} + preview") + " · " +
                     (settings.CameraIds.Count == 0 ? "all cameras" : $"{settings.CameraIds.Count} selected {(settings.CameraIds.Count == 1 ? "camera" : "cameras")}");
             }
         }
@@ -137,14 +138,23 @@ internal sealed class AppSession
         .UnionBy(_snapshot?.Apps ?? [], a => a.Key, StringComparer.OrdinalIgnoreCase)
         .UnionBy(_settings.Apps.Select(a => new CameraApp(a.Key, a.Name, CameraStatus.Inactive)), a => a.Key,
             StringComparer.OrdinalIgnoreCase)
+        .Where(a => !a.Key.Equals(PreviewTrigger.Key, StringComparison.OrdinalIgnoreCase))
         .Select(a => a with { Name = _appNames.GetValueOrDefault(a.Key, a.Name),
-            Status = _snapshot?.Apps.FirstOrDefault(p => p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))?.Status ??
-            (_snapshot?.Healthy == true ? CameraStatus.Inactive : CameraStatus.Unknown) })
+            Status = AppStatus(a.Key) })
         .OrderByDescending(a => _settings.Apps.Any(p => p.Enabled && p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase)))
         .ThenByDescending(a => a.Status == CameraStatus.Active)
         .ThenByDescending(a => _installedCameraApps.Any(p => p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase)) ||
             AppPriority.IsCameraOrCommunicationApp(a.Key))
         .ThenBy(a => a.Name).ToArray(); } }
+    private CameraStatus AppStatus(string key)
+    {
+        var observed = _snapshot?.Apps.FirstOrDefault(app => app.Key.Equals(key, StringComparison.OrdinalIgnoreCase))?.Status;
+        var preview = _sensorProcesses.Any(p => p.Pid == Environment.ProcessId && p.AppKey.Equals(key, StringComparison.OrdinalIgnoreCase)) ?
+            _snapshot?.Apps.FirstOrDefault(app => app.Key == PreviewTrigger.Key)?.Status : null;
+        if (observed == CameraStatus.Active || preview == CameraStatus.Active) return CameraStatus.Active;
+        if (observed == CameraStatus.Unknown || preview == CameraStatus.Unknown) return CameraStatus.Unknown;
+        return observed ?? preview ?? (_snapshot?.Healthy == true ? CameraStatus.Inactive : CameraStatus.Unknown);
+    }
     internal bool Suggested(CameraApp app) => Demo || app.Status == CameraStatus.Active ||
         Preferences.Apps.Any(a => a.Enabled && a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)) ||
         _installedCameraApps.Any(a => a.Key.Equals(app.Key, StringComparison.OrdinalIgnoreCase)) ||
@@ -216,7 +226,8 @@ internal sealed class AppSession
         lock (_gate)
         {
             var now = DateTimeOffset.UtcNow;
-            var status = ActivityStatus.Evaluate(_settings, _snapshot, Mode, now);
+            var triggers = PreviewTrigger.Include(_settings);
+            var status = ActivityStatus.Evaluate(triggers, _snapshot, Mode, now);
             string detail = _snapshot?.Detail ?? _sensorMessage;
             string key = $"{status.Code}|{detail}|{_sensor.Epoch}";
             if (_activityLogKey == key) return;
@@ -234,9 +245,9 @@ internal sealed class AppSession
                 _settings.CameraIds.Count == 0 ? "all" : string.Join(",", _settings.CameraIds.Select(Token)),
                 string.Join(",", _sensorCameras.Select(c => Token(c.Id))),
                 string.Join(",", _sensor.StreamingProcesses.Except(_sensorProcesses.Select(p => p.Pid)).Except(_sensorOtherOwners)),
-                _snapshot?.Apps.Count(a => a.Status == CameraStatus.Active && _settings.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))),
-                _snapshot?.Apps.Count(a => a.Status == CameraStatus.Unknown && _settings.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))),
-                string.Join(",", _settings.Apps.Where(a => a.Enabled).Select(a => $"{Token(a.Key)}:{_snapshot?.Apps.FirstOrDefault(p => p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))?.Status}")));
+                _snapshot?.Apps.Count(a => a.Status == CameraStatus.Active && triggers.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))),
+                _snapshot?.Apps.Count(a => a.Status == CameraStatus.Unknown && triggers.Apps.Any(s => s.Enabled && s.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))),
+                string.Join(",", triggers.Apps.Where(a => a.Enabled).Select(a => $"{Token(a.Key)}:{_snapshot?.Apps.FirstOrDefault(p => p.Key.Equals(a.Key, StringComparison.OrdinalIgnoreCase))?.Status}")));
         }
     }
     private void Save() => _storage.Save("settings.json", _settings, AppJson.Default.Settings);
@@ -478,7 +489,7 @@ internal sealed class AppSession
             now - _lastInventory >= TimeSpan.FromSeconds(15) ? "Camera inventory is stale; camera state is unknown." : null;
         var excluded = unavailable is not null ? [] : _sensorOtherOwners.Concat(_sensor.StreamingProcesses.Where(pid =>
             CameraLightTray.Monitor.ProcessCatalog.IsOtherSession(pid, _sensorSession))).ToArray();
-        _snapshot = _sensor.Snapshot(_sensorProcesses, excluded, _sensorCameras,
+        _snapshot = _sensor.Snapshot(PreviewTrigger.Attribute(_sensorProcesses, Environment.ProcessId), excluded, _sensorCameras,
             _settings.CameraIds, now, unavailable);
         _lastCallback = _sensor.LastCallback;
         return _snapshot;
@@ -498,7 +509,7 @@ internal sealed class AppSession
         _log.LogInformation("Camera preview starting; camera={Camera}", Token(camera.Id));
         await _preview.StartAsync(camera.Id);
         _log.LogInformation("Camera preview start completed; playing={Playing}", _preview.Playing);
-        PreviewDetail = _preview.Playing ? "Live local preview: " + camera.Name + ". No recording. Select CameraLightTray under Apps to test this preview's real sensor activity." :
+        PreviewDetail = _preview.Playing ? "Live local preview: " + camera.Name + ". No recording. Preview triggers lighting automatically when automation is enabled and this camera is monitored." :
             "Preview stopped.";
         Notify();
     }
@@ -523,7 +534,7 @@ internal sealed class AppSession
         {
             do
             {
-                var preferences = Preferences;
+                var preferences = PreviewTrigger.Include(Preferences);
                 MonitorSnapshot? snapshot;
                 lock (_gate)
                 {
@@ -939,10 +950,11 @@ internal sealed class AppSession
         }
         NotifySensor();
     }
-    internal void DemoCapture(bool active)
+    internal void DemoCapture(bool active, bool preview = false)
     {
         lock (_gate) _snapshot = new(1, Revision + 1, 1, DateTimeOffset.UtcNow, true, "Synthetic capture.",
-            [new("demo:meeting", "Example Meeting", active ? CameraStatus.Active : CameraStatus.Inactive)]);
+            [new(preview ? PreviewTrigger.Key : "demo:meeting", preview ? PreviewTrigger.Name : "Example Meeting",
+                active ? CameraStatus.Active : CameraStatus.Inactive)]);
         Notify();
     }
     internal async Task StopAsync()

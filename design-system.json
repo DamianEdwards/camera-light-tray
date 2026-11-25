@@ -43,7 +43,7 @@
       "navigation": "Memoized by page/theme; native hover survives background updates.",
       "popupButtons": "Memoized controls; stable owned native state brushes; 36-DIP power button with 6-DIP padding plus 1-DIP native border contains 20-DIP SVG",
       "manualControl": "Serialized per-light edits; preserve untouched fields; Resume auto or activation completion ends override; physical readbacks confirm state.",
-      "triggerSelection": "No selected apps means no automatic activation; explicit All cameras; suggestions and new lights never opt in automatically.",
+      "triggerSelection": "Built-in preview implicitly included for the current process only; other apps must be selected. Preview respects automation/pause and camera filters; suggestions and new lights never opt in automatically.",
       "evidence": {
         "screenshots": ["artifacts\\studio-smoke-data\\studio-on.png", "artifacts\\studio-smoke-data\\studio-settings.png"],
         "kind": "Synthetic native client-area renders; not physical hardware evidence",

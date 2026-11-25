@@ -8,6 +8,12 @@ using CameraLightTray.App.Platform;
 using CameraLightTray.Tests;
 using CameraLightTray.Core;
 
+if (args is ["--preview-trigger-check"])
+{
+    Console.WriteLine($"{PreviewTriggerChecks.Run()} preview-trigger tests passed.");
+    return;
+}
+
 if (args is ["--sensor-continuity-check"])
 {
     Console.WriteLine($"{SensorContinuityChecks.Run()} continuity tests passed.");
@@ -776,6 +782,7 @@ if (OperatingSystem.IsWindows())
 passed += await StudioChecks.RunAsync();
 passed += await LoggingChecks.RunAsync();
 passed += SensorContinuityChecks.Run();
+passed += PreviewTriggerChecks.Run();
 Console.WriteLine($"{passed} tests passed.");
 
 internal sealed class FakeLights : ILightTransport

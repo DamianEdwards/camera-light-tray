@@ -1,4 +1,5 @@
 using CameraLightTray.App.Native;
+using CameraLightTray.App.Platform;
 using CameraLightTray.App.UI;
 using CameraLightTray.Core;
 using Microsoft.UI.Reactor;
@@ -202,15 +203,19 @@ internal static class Program
                     ?? throw new InvalidOperationException("Reactor automation toggle was not rendered.");
                 if (enable.IsOn || session.Preferences.AutomationEnabled) throw new InvalidOperationException("Automation unexpectedly starts enabled.");
                 enable.IsOn = true;
-                Invoke(window, "DemoStart");
+                session.ClearApps();
+                session.DemoCapture(true, preview: true);
             });
             await Task.Delay(1500);
             await OnUI(() =>
             {
-                if (!session.Preferences.AutomationEnabled || !session.Apps.Any(a => a.Status == CameraStatus.Active))
-                    throw new InvalidOperationException("Synthetic UI activation failed.");
+                if (!session.Preferences.AutomationEnabled || session.Preferences.Apps.Any(a => a.Enabled) ||
+                    session.ActivityTitle != "Camera in use" || session.ActivityContext != PreviewTrigger.Name)
+                    throw new InvalidOperationException("Built-in preview must trigger without saved app selection and update the native status.");
                 if (!session.AutomationDetail.Contains("lights on", StringComparison.Ordinal))
                     throw new InvalidOperationException("Synthetic camera did not activate simulated light.");
+                session.SelectApp(new("demo:meeting", "Example Meeting", CameraStatus.Inactive), true);
+                Invoke(window, "DemoStart");
             });
             var lit = await OnUIWindow(showFlyout);
             await Task.Delay(300);

@@ -92,10 +92,10 @@ internal sealed class DashboardPage : Component<DashboardPageProps>
             .Where(a => session.ShowAllApps || !string.IsNullOrWhiteSpace(session.AppSearch) || session.Suggested(a)).ToArray();
         int selected = settings.Apps.Count(a => a.Enabled);
         return VStack(12,
-            Heading("Apps that trigger your lights", "Only selected apps can turn on your lights. They stay on while any selected app uses a monitored camera."),
-            Border(VStack(4, Copy(selected == 0 ? "Select an app to start" : $"{selected} {(selected == 1 ? "app" : "apps")} selected").SemiBold(),
-                Description(selected == 0 ? "No selection means no automatic activation—not every app." :
-                    "Other apps can use the camera without triggering lighting."))).Padding(14).Background(StudioStyle.Color("#EDF5FA", true)).CornerRadius(6),
+            Heading("Apps that trigger your lights", "The built-in preview is always included. Select other apps to keep lights on while any of them uses a monitored camera."),
+            Border(VStack(4, Copy(selected == 0 ? "Built-in preview included" : $"{selected} {(selected == 1 ? "app" : "apps")} selected").SemiBold(),
+                Description(selected == 0 ? "Only the built-in preview can trigger lighting until you select other apps." :
+                    "Unselected apps do not trigger lighting. The built-in preview is included automatically."))).Padding(14).Background(StudioStyle.Color("#EDF5FA", true)).CornerRadius(6),
             TextBox(session.AppSearch, value => { session.AppSearch = value; session.Notify(); }, "Search apps")
                 .AutomationName("Search apps").AutomationId("AppSearch"),
             Rule(),
@@ -135,7 +135,7 @@ internal sealed class DashboardPage : Component<DashboardPageProps>
             settings.CameraIds.Any(id => !cameras.Any(c => c.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) ?
                 InfoBar("Saved camera unavailable", "Choose an available camera or monitor all cameras.").Warning().IsClosable(false) : null,
             !session.Demo ? Section("Local camera preview", VStack(12,
-                Description("Select Camera Light Tray under Apps if you want this preview to trigger lighting. No recording."),
+                Description("Preview triggers lighting automatically when automation is enabled and this camera is monitored. No recording."),
                 ComboBox(cameras.Select(c => c.Name).ToArray(), Array.FindIndex(cameras, c => c.Id == session.PreviewCameraId),
                     index => { if (index >= 0 && index < cameras.Length) { session.PreviewCameraId = cameras[index].Id; session.Notify(); } })
                     .AutomationName("Preview camera"),
@@ -179,13 +179,13 @@ internal sealed class DashboardPage : Component<DashboardPageProps>
         var settings = session.Preferences;
         return VStack(12,
             Heading("Lighting, on cue", "Set up your triggers once. Then get back to your meeting."),
-            Row(VStack(4, Copy(settings.Apps.Any(a => a.Enabled) ? $"{settings.Apps.Count(a => a.Enabled)} trigger {(settings.Apps.Count(a => a.Enabled) == 1 ? "app" : "apps")} selected" : "Choose trigger apps").SemiBold(),
-                Description("Only selected apps can activate lights")), Button("Edit", () => Navigate(1))),
+            Row(VStack(4, Copy(settings.Apps.Any(a => a.Enabled) ? $"{settings.Apps.Count(a => a.Enabled)} trigger {(settings.Apps.Count(a => a.Enabled) == 1 ? "app" : "apps")} selected" : "Built-in preview only").SemiBold(),
+                Description("Built-in preview is always included; other apps must be selected")), Button("Edit", () => Navigate(1))),
             Row(VStack(4, Copy(settings.CameraIds.Count == 0 ? "All cameras" : $"{settings.CameraIds.Count} trigger {(settings.CameraIds.Count == 1 ? "camera" : "cameras")}").SemiBold(),
                 Description("Camera filters are independent of app selection")), Button("Edit", () => Navigate(2))),
             Row(VStack(4, Copy($"{settings.Lights.Count(l => l.Enabled && !l.Tls)} lights set to auto").SemiBold(),
                 Description("Previous light states are preserved")), Button("Edit", () => Navigate(3))),
-            Row(VStack(4, Copy("Enable automation").SemiBold(), Description("No selected apps means no automatic activation.")),
+            Row(VStack(4, Copy("Enable automation").SemiBold(), Description("Applies to the built-in preview and selected apps.")),
                 ToggleSwitch(settings.AutomationEnabled, session.Enable).MinWidth(0).HAlign(HorizontalAlignment.Right)
                     .HorizontalContentAlignment(HorizontalAlignment.Right).AutomationName("Enable automation").AutomationId("AutomationEnabled")),
             Row(VStack(4, Copy("Ignore brief camera checks").SemiBold(), Description("Delay before turning lights on, in milliseconds.")),
