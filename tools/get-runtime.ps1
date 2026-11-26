@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-$assetsPath = Join-Path $PSScriptRoot '..\src\CameraLightTray.App\obj\project.assets.json'
+$assetsPath = Join-Path $PSScriptRoot '..\artifacts\obj\CameraLightTray.App\project.assets.json'
 $assets = Get-Content -LiteralPath $assetsPath -Raw | ConvertFrom-Json
 $library = @($assets.libraries.PSObject.Properties | Where-Object Name -eq 'Microsoft.WindowsAppSDK.Runtime/2.5.1')
 if ($library.Count -ne 1) { throw 'Restore/build the app first; expected shared Runtime 2.5.1 dependency.' }

@@ -79,7 +79,7 @@ function Reset-State {
         SdkExitCode = 0
         NativeExitCode = 0
         ProduceArtifact = $true
-        Executable = Join-Path $fixture 'artifacts\run-published\CameraLightTray.exe'
+        Executable = Join-Path $fixture 'artifacts\publish\CameraLightTray.App\release_win-x64\CameraLightTray.exe'
         Kits = Join-Path $fixture 'kits'
         Runtime = [pscustomobject]@{
             Name = 'Microsoft.WindowsAppRuntime.2'; Version = '2.5.1.0'; Architecture = 'X64'; IsFramework = $true
@@ -105,7 +105,7 @@ function Test([string] $Name, [scriptblock] $Action) {
 
 try {
     New-Item -ItemType Directory -Path (Join-Path $fixture 'src\CameraLightTray.App') -Force | Out-Null
-    Copy-Item -LiteralPath (Join-Path $root 'run.ps1'), (Join-Path $root 'global.json') -Destination $fixture
+    Copy-Item -LiteralPath (Join-Path $root 'run.ps1'), (Join-Path $root 'global.json'), (Join-Path $root 'Directory.Build.props') -Destination $fixture
     Copy-Item -LiteralPath (Join-Path $root 'src\CameraLightTray.App\CameraLightTray.App.csproj') -Destination (Join-Path $fixture 'src\CameraLightTray.App')
     $env:LOCALAPPDATA = Join-Path $fixture 'local-data'
     foreach ($relative in @('kits\Include\10.0.26100.0\um\Windows.h', 'kits\Lib\10.0.26100.0\um\x64\kernel32.lib', 'kits\Lib\10.0.26100.0\ucrt\x64\ucrt.lib')) {
@@ -131,10 +131,10 @@ try {
         Assert (($state.Calls[1] -join '|') -eq "run|--project|$project|-c|Release|--no-build") 'NoBuild did not pass through.'
         Assert ($state.Calls.Count -eq 2) 'NoBuild performed extra dotnet work.'
     }
-    Test '-Published publishes and then launches from one stable folder' {
+    Test '-Published uses the SDK artifacts layout without overriding its output path' {
         & $script -Published
         $output = Split-Path $state.Executable -Parent
-        Assert (($state.Calls[1] -join '|') -eq "publish|$project|-c|Release|-r|win-x64|-o|$output|--nologo") 'Wrong publish invocation.'
+        Assert (($state.Calls[1] -join '|') -eq "publish|$project|-c|Release|-r|win-x64|--nologo") 'Publish must use the SDK artifacts layout without -o.'
         Assert ($state.Launches.Count -eq 1 -and $state.Launches[0].Path -eq $state.Executable -and
             $state.Launches[0].WorkingDirectory -eq $output) 'Published executable was not launched from its output folder.'
     }

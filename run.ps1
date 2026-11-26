@@ -42,7 +42,7 @@ try {
     }
 
     $projectPath = Join-Path $PSScriptRoot 'src\CameraLightTray.App\CameraLightTray.App.csproj'
-    $publishedPath = Join-Path $PSScriptRoot 'artifacts\run-published'
+    $publishedPath = Join-Path $PSScriptRoot 'artifacts\publish\CameraLightTray.App\release_win-x64'
     $executablePath = Join-Path $publishedPath 'CameraLightTray.exe'
     if ($Published -and $NoBuild -and -not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {
         throw "Published app not found: $executablePath. Run .\run.ps1 -Published first."
@@ -107,7 +107,7 @@ try {
                     (Test-Path -LiteralPath (Join-Path $kits "Lib\$($_.Name)\ucrt\x64\ucrt.lib"))
                 })
             if (-not $windowsSdk.Count) { throw 'Native AOT publishing requires Windows SDK 10.0.26100.0 or later with x64 libraries.' }
-            & dotnet publish $projectPath -c Release -r win-x64 -o $publishedPath --nologo
+            & dotnet publish $projectPath -c Release -r win-x64 --nologo
             if ($LASTEXITCODE -ne 0) { throw "Native AOT publish failed (exit code $LASTEXITCODE). The app was not started." }
         }
         if (-not (Test-Path -LiteralPath $executablePath -PathType Leaf)) {

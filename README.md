@@ -290,8 +290,13 @@ does not install prerequisites, elevate, install the helper, or enable automatio
 Normal launches use your saved preferences. An existing app using the default
 storage folder is detected by its exclusive instance lock and is left running.
 
-Published output uses the stable `artifacts\run-published` folder, preserving
-its executable path across updates. `-Published -NoBuild` needs only the OS
+The repo enables .NET's artifacts layout through `UseArtifactsOutput` in
+`Directory.Build.props`. The app's Release x64 build is under
+`artifacts\bin\CameraLightTray.App\release_win-x64`, and publish output is under
+`artifacts\publish\CameraLightTray.App\release_win-x64`. Intermediate files are
+under `artifacts\obj\<project>`. `run.ps1` uses the SDK's default publish location
+without an output override, preserving the executable path across updates.
+`-Published -NoBuild` needs only the OS
 and shared Windows App Runtime, not the .NET SDK or C++ tools. Both `-NoBuild`
 modes fail if their required output is missing; they never fall back to building.
 Development mode stays attached to `dotnet run` until the app exits; published
