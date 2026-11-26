@@ -46,8 +46,11 @@ internal sealed unsafe partial class Tray : IDisposable
     private readonly nint _window;
     private readonly uint _taskbarCreated;
     private readonly Action _show, _pause, _exit;
+    private readonly Action<bool> _select;
     private readonly Action<string> _error;
     internal Action? Resumed;
+    internal event Action? MouseDown;
+    internal event Action? MouseUp;
     private bool _added;
     private readonly IconHandle _lightIcon, _darkIcon;
     internal nint Handle => _window;
@@ -59,11 +62,11 @@ internal sealed unsafe partial class Tray : IDisposable
     internal void SelectForSmoke() => SendMessage(_window, 0x8002, 0, (nint)((1 << 16) | 0x400));
     internal static void CloseForSmoke(nint window) => SendMessage(window, 0x10, 0, 0);
 
-    internal Tray(Action show, Action pause, Action exit, Action<string> error)
+    internal Tray(Action<bool> select, Action show, Action pause, Action exit, Action<string> error)
     {
         _lightIcon = IconHandle.Load("TrayLight.ico");
         _darkIcon = IconHandle.Load("TrayDark.ico");
-        _show = show; _pause = pause; _exit = exit; _error = error;
+        _select = select; _show = show; _pause = pause; _exit = exit; _error = error;
         const string className = "CameraLightTray.Hidden";
         fixed (char* name = className)
         {
@@ -112,7 +115,9 @@ internal sealed unsafe partial class Tray : IDisposable
                 if (message == 0x8002)
                 {
                     int action = (int)((nuint)lparam & 0xFFFF);
-                    if (action is 0x400 or 0x401) tray._show();
+                    if (action is 0x400 or 0x401) tray._select(action == 0x400);
+                    else if (action == 0x201) tray.MouseDown?.Invoke();
+                    else if (action == 0x202) tray.MouseUp?.Invoke();
                     else if (action == 0x7B) tray.Menu();
                     return 0;
                 }
@@ -120,6 +125,25 @@ internal sealed unsafe partial class Tray : IDisposable
             catch (Exception ex) { tray._error("Tray operation failed: " + ex.Message); }
         }
         return DefWindowProc(window, message, wparam, lparam);
+    }
+    internal bool IsPointerPressedOverIcon()
+    {
+        int button = GetSystemMetrics(23) != 0 ? 2 : 1; // SM_SWAPBUTTON; primary mouse button.
+        if ((GetAsyncKeyState(button) & 0x8000) == 0) return false;
+        var id = new Identifier { Size = (uint)sizeof(Identifier), Window = _window, Id = 1 };
+        int result = ShellNotifyIconGetRect(ref id, out var rectangle);
+        if (result < 0)
+        {
+            _error($"Cannot read the tray icon bounds (0x{result:X8}).");
+            return false;
+        }
+        if (GetCursorPos(out var cursor) == 0)
+        {
+            _error("Cannot read the tray pointer position: " + new Win32Exception(Marshal.GetLastPInvokeError()).Message);
+            return false;
+        }
+        return cursor.X >= rectangle.Left && cursor.X < rectangle.Right &&
+            cursor.Y >= rectangle.Top && cursor.Y < rectangle.Bottom;
     }
     private void Menu()
     {
@@ -227,10 +251,16 @@ internal sealed unsafe partial class Tray : IDisposable
     private static partial int DestroyMenu(nint menu);
     [LibraryImport("user32.dll")]
     private static partial int TrackPopupMenuEx(MenuHandle menu, uint flags, int x, int y, nint window, nint parameters);
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", SetLastError = true)]
     private static partial int GetCursorPos(out Point point);
     [LibraryImport("user32.dll")]
-    private static partial int SetForegroundWindow(nint window);
+    private static partial short GetAsyncKeyState(int key);
+    [LibraryImport("user32.dll")]
+    private static partial int GetSystemMetrics(int index);
+    [LibraryImport("user32.dll")]
+    internal static partial int SetForegroundWindow(nint window);
+    [LibraryImport("user32.dll")]
+    internal static partial nint GetForegroundWindow();
     [LibraryImport("user32.dll", EntryPoint = "PostMessageW")]
     private static partial int PostMessage(nint window, uint message, nuint wparam, nint lparam);
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]

@@ -8,6 +8,12 @@ using CameraLightTray.App.Platform;
 using CameraLightTray.Tests;
 using CameraLightTray.Core;
 
+if (args is ["--tray-flyout-check"])
+{
+    Console.WriteLine($"{TrayFlyoutChecks.Run()} tray-flyout tests passed.");
+    return;
+}
+
 if (args is ["--preview-trigger-check"])
 {
     Console.WriteLine($"{PreviewTriggerChecks.Run()} preview-trigger tests passed.");
@@ -783,6 +789,7 @@ passed += await StudioChecks.RunAsync();
 passed += await LoggingChecks.RunAsync();
 passed += SensorContinuityChecks.Run();
 passed += PreviewTriggerChecks.Run();
+passed += TrayFlyoutChecks.Run();
 Console.WriteLine($"{passed} tests passed.");
 
 internal sealed class FakeLights : ILightTransport

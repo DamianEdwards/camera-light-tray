@@ -41,7 +41,9 @@ records images, audio or video. The app sends no telemetry.
   on/off/unknown states, independent Auto switches, power controls, brightness
   and color-temperature sliders. A cog opens the full settings window.
   The flyout anchors to the tray icon, stays within the monitor work area,
-  and dismisses on Escape or loss of activation.
+  and dismisses on Escape or loss of activation. Tray selection opens it in
+  the foreground, toggles an active popup off, or brings a stranded background
+  popup forward rather than mistaking visibility for foreground activation.
 - **General / Appearance** selects **System**, **Light** or **Dark** for both
   the flyout and settings. System is the default for new and existing
   preferences and follows Windows app-color changes without restarting.
@@ -144,6 +146,9 @@ camera cannot provide an activity baseline. Manually entered IP addresses
 are fixed endpoints; use mDNS discovery for automatic DHCP endpoint updates.
 
 Click the tray icon for quick light controls; the cog opens full settings.
+Clicking the icon again hides the active popup. Activating another window
+hides it automatically; a tray click that itself transfers focus does not
+immediately reopen the popup it just dismissed.
 To launch directly into settings when the app is not already running, use
 `CameraLightTray.exe --settings`.
 Unknown/unreachable power is never depicted as off, and stale readings disable
@@ -183,6 +188,8 @@ Activity transitions include a reason such as `healthy-idle`, `sensor-unhealthy`
 `snapshot-unavailable` or `snapshot-stale`, along with snapshot/callback/catalog
 ages, source epoch and the current monitoring operation. This distinguishes
 a four-second freshness timeout from a genuine sensor-health change.
+Tray logs also record icon selection, popup visibility/foreground state,
+focus-loss dismissal, and denied foreground activation.
 
 Verification logs identify the primary and candidate generations, warm-up,
 atomic handover, retirement and failed replacements. An incomplete replacement

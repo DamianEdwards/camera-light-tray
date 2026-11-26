@@ -16,6 +16,7 @@
     <Compile Include="..\..\src\CameraLightTray.App\Platform\SensorActivityMonitor.cs" Link="SensorActivityMonitor.cs" />
     <Compile Include="..\..\src\CameraLightTray.Monitor\ProcessCatalog.cs" Link="ProcessCatalog.cs" />
     <Compile Include="..\..\src\CameraLightTray.App\Native\FlyoutPlacement.cs" Link="FlyoutPlacement.cs" />
+    <Compile Include="..\..\src\CameraLightTray.App\Native\TrayFlyoutInteraction.cs" Link="TrayFlyoutInteraction.cs" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.12" />

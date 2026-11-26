@@ -66,6 +66,7 @@ internal static class Program
             ReactorApp.ShutdownPolicy = ShutdownPolicy.Explicit;
             ReactorApp.Run(context =>
             {
+                var popupInteraction = new TrayFlyoutInteraction();
                 bool? captionDark = null;
                 void ApplyCaption()
                 {
@@ -106,6 +107,12 @@ internal static class Program
                     }
                     tray?.Place(flyout, height);
                 }
+                void HideFlyout(string reason)
+                {
+                    popupInteraction.Reset();
+                    flyout?.Hide();
+                    log.LogInformation("Tray popup dismissed; reason={Reason}", reason);
+                }
                 ReactorWindow ShowFlyout()
                 {
                     if (flyout is null)
@@ -116,28 +123,57 @@ internal static class Program
                             Width = 400, Style = WindowStyle.None,
                             MaxHeight = 730,
                             ResizeMode = WindowResizeMode.NoResize, ShowInTaskbar = false, ShowInSwitcher = false,
-                            CornerStyle = WindowCornerStyle.Rounded, ActivateOnOpen = !smoke
+                            CornerStyle = WindowCornerStyle.Rounded, ActivateOnOpen = false
                         }, () => new Studio(session));
-                        flyout.Closing += (_, e) => { if (!exiting) { e.Cancel = true; flyout.Hide(); } };
-                        flyout.Deactivated += (_, _) => { if (!smoke && !demo) flyout.Hide(); };
+                        flyout.Closing += (_, e) => { if (!exiting) { e.Cancel = true; HideFlyout("window close"); } };
+                        flyout.NativeWindow.Activated += (_, e) =>
+                        {
+                            if (exiting || smoke || demo || e.WindowActivationState != WindowActivationState.Deactivated) return;
+                            nint handle = WinRT.Interop.WindowNative.GetWindowHandle(flyout.NativeWindow);
+                            if (Tray.IsWindowVisible(handle) == 0 || Tray.GetForegroundWindow() == handle) return;
+                            bool trayPress = tray?.IsPointerPressedOverIcon() == true;
+                            popupInteraction.LostActivation(trayPress);
+                            flyout.Hide();
+                            log.LogInformation("Tray popup lost activation and was hidden; trayMousePress={TrayMousePress}", trayPress);
+                        };
                         flyout.NativeWindow.SizeChanged += (_, _) => PlaceFlyout();
                         ((FrameworkElement)flyout.NativeWindow.Content).LayoutUpdated += (_, _) => PlaceFlyout();
                         flyout.NativeWindow.Content.KeyDown += (_, e) =>
                         {
-                            if (e.Key == Windows.System.VirtualKey.Escape) { flyout.Hide(); e.Handled = true; }
+                            if (e.Key == Windows.System.VirtualKey.Escape) { HideFlyout("Escape"); e.Handled = true; }
                         };
                     }
+                    popupInteraction.Reset();
                     PlaceFlyout();
-                    flyout.Show();
-                    if (!smoke) flyout.Activate();
+                    if (smoke) flyout.NativeWindow.AppWindow.Show(false);
+                    else
+                    {
+                        flyout.Show();
+                        flyout.Activate();
+                        nint handle = WinRT.Interop.WindowNative.GetWindowHandle(flyout.NativeWindow);
+                        bool activated = Tray.GetForegroundWindow() == handle ||
+                            Tray.SetForegroundWindow(handle) != 0 || Tray.GetForegroundWindow() == handle;
+                        log.LogInformation("Tray popup shown; foreground={Foreground}", activated);
+                        if (!activated)
+                        {
+                            HideFlyout("foreground activation denied");
+                            session.Report("Windows prevented the light controls from taking focus. Select the tray icon again.");
+                        }
+                    }
                     return flyout;
                 }
-                void TrayClicked()
+                void TrayClicked(bool mouseSelection)
                 {
-                    if (flyout is not null && Tray.IsWindowVisible(WinRT.Interop.WindowNative.GetWindowHandle(flyout.NativeWindow)) != 0) flyout.Hide();
-                    else ShowFlyout();
+                    nint handle = flyout is null ? 0 : WinRT.Interop.WindowNative.GetWindowHandle(flyout.NativeWindow);
+                    bool visible = handle != 0 && Tray.IsWindowVisible(handle) != 0;
+                    bool foreground = handle != 0 && Tray.GetForegroundWindow() == handle;
+                    bool show = popupInteraction.ShouldShow(visible, foreground, mouseSelection);
+                    log.LogInformation("Tray icon selected; mouse={Mouse}, visible={Visible}, foreground={Foreground}, show={Show}",
+                        mouseSelection, visible, foreground, show);
+                    if (show) ShowFlyout();
+                    else HideFlyout("tray toggle");
                 }
-                session.OpenSettings = () => { flyout?.Hide(); ShowSettings(); };
+                session.OpenSettings = () => { HideFlyout("settings opened"); ShowSettings(); };
                 async void Exit()
                 {
                     if (exiting) return;
@@ -164,8 +200,10 @@ internal static class Program
                         exitCode = 1; Exit();
                     }
                 };
-                tray = new(TrayClicked, () => session.SetMode(session.Mode == ManualMode.Paused ? ManualMode.Automatic : ManualMode.Paused),
+                tray = new(TrayClicked, () => ShowFlyout(), () => session.SetMode(session.Mode == ManualMode.Paused ? ManualMode.Automatic : ManualMode.Paused),
                     Exit, session.Report);
+                tray.MouseDown += popupInteraction.MouseDown;
+                tray.MouseUp += popupInteraction.MouseUp;
                 tray.Resumed += session.Resume;
                 session.SetLoggingFailure(Volatile.Read(ref loggingFailure));
                 session.Start();
