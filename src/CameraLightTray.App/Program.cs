@@ -131,7 +131,7 @@ internal static class Program
                             if (exiting || smoke || demo || e.WindowActivationState != WindowActivationState.Deactivated) return;
                             nint handle = WinRT.Interop.WindowNative.GetWindowHandle(flyout.NativeWindow);
                             if (Tray.IsWindowVisible(handle) == 0 || Tray.GetForegroundWindow() == handle) return;
-                            bool trayPress = tray?.IsPointerPressedOverIcon() == true;
+                            bool trayPress = tray?.IsPointerSelectingIcon(popupInteraction.SelectionPending) == true;
                             popupInteraction.LostActivation(trayPress);
                             flyout.Hide();
                             log.LogInformation("Tray popup lost activation and was hidden; trayMousePress={TrayMousePress}", trayPress);

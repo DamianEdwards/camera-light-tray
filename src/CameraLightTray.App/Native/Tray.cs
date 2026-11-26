@@ -126,10 +126,10 @@ internal sealed unsafe partial class Tray : IDisposable
         }
         return DefWindowProc(window, message, wparam, lparam);
     }
-    internal bool IsPointerPressedOverIcon()
+    internal bool IsPointerSelectingIcon(bool selectionPending)
     {
         int button = GetSystemMetrics(23) != 0 ? 2 : 1; // SM_SWAPBUTTON; primary mouse button.
-        if ((GetAsyncKeyState(button) & 0x8000) == 0) return false;
+        if (!selectionPending && (GetAsyncKeyState(button) & 0x8000) == 0) return false;
         var id = new Identifier { Size = (uint)sizeof(Identifier), Window = _window, Id = 1 };
         int result = ShellNotifyIconGetRect(ref id, out var rectangle);
         if (result < 0)

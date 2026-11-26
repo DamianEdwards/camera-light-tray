@@ -37,6 +37,16 @@ internal static class TrayFlyoutChecks
             popup.MouseUp();
             Assert(!popup.ShouldShow(false, false, true), "Late mouse-down delivery discarded the pending dismissal.");
         });
+        Test("focus loss after mouse release still belongs to the pending tray selection", () =>
+        {
+            var popup = new TrayFlyoutInteraction();
+            popup.MouseDown();
+            popup.MouseUp();
+            Assert(popup.SelectionPending, "Mouse release discarded the gesture before NIN_SELECT.");
+            popup.LostActivation(pressedOnTray: popup.SelectionPending);
+            Assert(!popup.ShouldShow(false, false, true), "Late activation loss reopened the popup.");
+            Assert(!popup.SelectionPending, "Consumed selection left stale gesture state.");
+        });
         Test("canceled tray presses cannot suppress a subsequent new click", () =>
         {
             var popup = new TrayFlyoutInteraction();
