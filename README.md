@@ -273,6 +273,34 @@ C++ x64 build tools, and Windows SDK 10.0.26100.0 or later for Native AOT.
 The shared Windows App Runtime prerequisite is needed to launch the UI,
 not for the pure-core tests.
 
+For everyday use, run the root script from PowerShell:
+
+```powershell
+.\run.ps1                      # Build and launch using dotnet run (Release)
+.\run.ps1 -NoBuild             # dotnet run --no-build; requires an existing Release build
+.\run.ps1 -Published           # Publish Native AOT, then launch the published executable
+.\run.ps1 -Published -NoBuild  # Launch the existing published executable without dotnet/build/restore
+```
+
+The script works in Windows PowerShell 5.1 and PowerShell 7, including when
+called from another directory. It checks Windows x64, the SDK selected by
+`global.json` when needed, and the shared Windows App Runtime registration.
+Publishing also checks Visual Studio C++ x64 tools and the Windows SDK. It
+does not install prerequisites, elevate, install the helper, or enable automation.
+Normal launches use your saved preferences. An existing app using the default
+storage folder is detected by its exclusive instance lock and is left running.
+
+Published output uses the stable `artifacts\run-published` folder, preserving
+its executable path across updates. `-Published -NoBuild` needs only the OS
+and shared Windows App Runtime, not the .NET SDK or C++ tools. Both `-NoBuild`
+modes fail if their required output is missing; they never fall back to building.
+Development mode stays attached to `dotnet run` until the app exits; published
+mode returns after starting the executable. Exit through the tray menu before
+rebuilding an already running app. The built-in preview triggers automatically
+from either location.
+
+For isolated or synthetic runs and verification, use the underlying commands:
+
 ```powershell
 .\tools\verify.ps1 -NativeTests
 dotnet run --project src\CameraLightTray.App -c Release -- --isolated --data-dir .\artifacts\dev-data
